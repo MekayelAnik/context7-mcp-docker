@@ -7,7 +7,7 @@
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/mekayelanik/context7-mcp.svg?style=flat-square)](https://hub.docker.com/r/mekayelanik/context7-mcp)
 [![Docker Stars](https://img.shields.io/docker/stars/mekayelanik/context7-mcp.svg?style=flat-square)](https://hub.docker.com/r/mekayelanik/context7-mcp)
-[![License](https://img.shields.io/badge/license-GPL-blue.svg?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL-blue.svg?style=flat-square)](https://raw.githubusercontent.com/MekayelAnik/context7-mcp-docker/refs/heads/main/LICENSE)
 
 **[Official Website](https://context7.com/)** • **[Documentation](https://github.com/upstash/context7)** • **[Docker Hub](https://hub.docker.com/r/mekayelanik/context7-mcp)**
 
@@ -514,7 +514,7 @@ We welcome contributions:
 
 ### License
 
-GPL License. See [LICENSE](LICENSE) for details.
+GPL License. See [LICENSE](https://raw.githubusercontent.com/MekayelAnik/context7-mcp-docker/refs/heads/main/LICENSE) for details.
 
 Context7 MCP server has its own license - see [Main NPM repo](https://github.com/upstash/context7).
 
