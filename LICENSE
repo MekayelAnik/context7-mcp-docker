@@ -631,11 +631,9 @@ to attach them to the start of each source file to most effectively
 state the exclusion of warranty; and each file should have at least
 the "copyright" line and a pointer to where the full notice is found.
 
-    This is an Unofficial docker compatible container image of Context7 MCP for distributed/remote deployment.
-    
-    Copyright (C) <2025>  <Mohammad Mekayel Anik>
+    This is an Unofficial Docker-compatible container image of Context7 MCP for distributed/remote deployment.
 
-    * [Context7 Docker Image (Gitub: https://github.com/MekayelAnik/context7-mcp-docker; Docker Hub: https://hub.docker.com/r/mekayelanik/context7-mcp)]
+    * [Context7 MCP Docker Image (Gitub: https://github.com/MekayelAnik/context7-mcp-docker; Docker Hub: https://hub.docker.com/r/mekayelanik/context7-mcp)]
     * 
     * Copyright (C) [2025] [Mohammad Mekayel Anik (mekayel.anik@gmail.com)]
 
