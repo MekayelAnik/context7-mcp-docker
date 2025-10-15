@@ -2,8 +2,7 @@ build_logs
 resources/build_data
 resources/build-timestamp
 resources/tag
-Dockerfile.ispyagentdvr
+Dockerfile.context7-mcp
 /.vs
-/DockerfileModifier.sh
-/Dockerfile.ispyagentdvr-docker
+/Dockerfile.context7-mcp
 /Dockerfile
