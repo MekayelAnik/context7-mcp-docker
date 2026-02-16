@@ -36,13 +36,17 @@ LABEL org.opencontainers.image.source="https://github.com/mekayelanik/context7-m
 
 # Copy the entrypoint script into the container and make it executable
 COPY ./resources/ /usr/local/bin/
+
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/banner.sh \
-    && chmod +r /usr/local/bin/build-timestamp.txt
+    && chmod +r /usr/local/bin/build-timestamp.txt \
+    && mkdir -p /etc/haproxy \
+    && mv -vf /usr/local/bin/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template \
+    && ls -la /etc/haproxy/haproxy.cfg.template
 
 # Install required APK packages
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories && \
     echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories && \
-    apk --update-cache --no-cache add bash shadow su-exec tzdata && \
+    apk --update-cache --no-cache add bash shadow su-exec tzdata haproxy && \
     rm -rf /var/cache/apk/*
 
 # Check if package exists before installing

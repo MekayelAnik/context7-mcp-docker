@@ -6,3 +6,5 @@ Dockerfile.context7-mcp
 /.vs
 /Dockerfile.context7-mcp
 /Dockerfile
+.buildx-cache
+.git
