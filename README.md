@@ -28,8 +28,18 @@
 - [Troubleshooting](#troubleshooting)
 - [Additional Resources](#additional-resources)
 - [Support & License](#support--license)
+- [Major Changes](#major-changes)
 
 ---
+
+## 😎 Buy Me a Coffee ☕︎
+**Your support encourages me to keep creating/supporting my open-source projects.** If you found value in this project, you can buy me a coffee to keep me inspired.
+
+<p align="center">
+<a href="https://07mekayel07.gumroad.com/coffee" target="_blank">
+<img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="217" height="60">
+</a>
+</p>
 
 ## Overview
 
@@ -200,40 +210,16 @@ Configure in `.vscode/settings.json`:
 
 ---
 
-### Claude Desktop App
-
-**Config Locations:**
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+### Claude Desktop App/Claude Code
 
 **Configuration:**
-```json
-{
-  "mcpServers": {
-    "context7": {
-      "transport": "http",
-      "url": "http://localhost:8010/mcp"
-    }
-  }
-}
+### **With API_KEY**
 ```
-
----
-
-### Claude CLI
-
-Configure in `~/.config/claude-cli/config.json`:
-
-```json
-{
-  "mcpServers": {
-    "context7": {
-      "transport": "http",
-      "url": "http://host-ip:8010/mcp"
-    }
-  }
-}
+claude mcp add-json github '{"type":"http","url":"http://localhost:8045/mcp","headers":{"Authorization":"Bearer <YOUR_API_KEY>"}}'
+```
+### **Without API_KEY**
+```
+claude mcp add-json github '{"type":"http","url":"http://localhost:8045/mcp"}'
 ```
 
 ---
@@ -493,6 +479,15 @@ docker inspect context7-mcp > inspect.json
 
 ---
 
+## 😎 Buy Me a Coffee ☕︎
+**Your support encourages me to keep creating/supporting my open-source projects.** If you found value in this project, you can buy me a coffee to keep me inspired.
+
+<p align="center">
+  <a href="https://07mekayel07.gumroad.com/coffee" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="217" height="60">
+  </a>
+</p>
+
 ## Support & License
 
 ### Getting Help
@@ -519,6 +514,14 @@ GPL License. See [LICENSE](https://raw.githubusercontent.com/MekayelAnik/context
 Context7 MCP server has its own license - see [Main NPM repo](https://github.com/upstash/context7).
 
 ---
+
+### Major Changes
+
+<ul>
+  <li><strong>2.1.1:</strong> - ⚠️⚠️⚠️ Added working APY_KEY authentication ⚠️⚠️⚠️</li>
+</ul>
+
+<p></p>
 
 <div align="center">
 
