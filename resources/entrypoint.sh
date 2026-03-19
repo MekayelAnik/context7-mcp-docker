@@ -11,7 +11,9 @@ readonly DEFAULT_TLS_DAYS=365
 readonly DEFAULT_TLS_CN="localhost"
 readonly DEFAULT_TLS_MIN_VERSION="TLSv1.3"
 readonly DEFAULT_HTTP_VERSION_MODE="auto"
-readonly SAFE_API_KEY_REGEX='^[A-Za-z0-9_:.@+=-]{5,256}$'
+readonly SAFE_API_KEY_REGEX='^[A-Za-z0-9_:.@+=-]+$'
+readonly MIN_API_KEY_LEN=5
+readonly MAX_API_KEY_LEN=256
 readonly FIRST_RUN_FILE="/tmp/first_run_complete"
 readonly HAPROXY_SERVER_NAME="ctx7"
 readonly HAPROXY_TEMPLATE="/etc/haproxy/haproxy.cfg.template"
@@ -107,10 +109,17 @@ normalize_http_version_mode() {
 validate_api_key() {
     API_KEY="${API_KEY:-}"
     API_KEY="$(trim "$API_KEY")"
+    local api_key_len=0
 
     if [[ -z "$API_KEY" ]]; then
         export API_KEY=""
         return
+    fi
+
+    api_key_len="${#API_KEY}"
+    if (( api_key_len < MIN_API_KEY_LEN || api_key_len > MAX_API_KEY_LEN )); then
+        echo "Invalid API_KEY length (${api_key_len}). Expected ${MIN_API_KEY_LEN}-${MAX_API_KEY_LEN} characters." >&2
+        exit 1
     fi
 
     if [[ ! "$API_KEY" =~ $SAFE_API_KEY_REGEX ]]; then
