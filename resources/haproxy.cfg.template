@@ -17,7 +17,15 @@ defaults
 
 # Frontend - receives all incoming requests
 frontend mcp_frontend
-    bind *:__PORT__
+    bind *:__SERVER_PORT__ __BIND_PARAMS__
+    __QUIC_BIND_LINE__
+    
+    # Define ACL for health check endpoint from localhost
+    acl is_health_check path /healthz
+    acl is_localhost src 127.0.0.1 ::1
+    
+    # Define ACL that's always false (for CORS disabled scenario)
+    acl always_false always_false
     
     # Extract Authorization header
     http-request set-var(txn.auth_header) req.hdr(Authorization)
@@ -27,10 +35,11 @@ frontend mcp_frontend
     
     __CORS_CHECK__
     
+    # Skip API key check only for health check from localhost
     __API_KEY_CHECK__
     
-    # Handle CORS preflight (OPTIONS) requests
-    http-request return status 204 content-type "text/plain" hdr "Access-Control-Allow-Origin" "%[var(txn.origin)]" hdr "Access-Control-Allow-Methods" "GET, POST, PUT, DELETE, OPTIONS" hdr "Access-Control-Allow-Headers" "Authorization, Content-Type, X-Requested-With" hdr "Access-Control-Max-Age" "86400" if METH_OPTIONS __CORS_PREFLIGHT_CONDITION__
+    # Handle CORS preflight (OPTIONS) requests (only if CORS is enabled)
+    http-request return status 204 hdr "Access-Control-Allow-Origin" "%[var(txn.origin)]" hdr "Access-Control-Allow-Methods" "GET, POST, PUT, DELETE, OPTIONS" hdr "Access-Control-Allow-Headers" "Authorization, Content-Type, X-Requested-With" hdr "Access-Control-Max-Age" "86400" if METH_OPTIONS __CORS_PREFLIGHT_CONDITION__
     
     # Add CORS headers to all responses
     http-response set-header Access-Control-Allow-Origin "%[var(txn.origin)]" if __CORS_RESPONSE_CONDITION__
@@ -42,4 +51,4 @@ frontend mcp_frontend
 # Backend - forwards to the actual MCP server
 backend mcp_backend
     balance roundrobin
-    server context7 127.0.0.1:__INTERNAL_PORT__ check
+    server __SERVER_NAME__ 127.0.0.1:__INTERNAL_PORT__ check

@@ -2,7 +2,7 @@
 set -ex
 # Set variables first
 REPO_NAME='context7-mcp'
-BASE_IMAGE=$(cat ./build_data/base-image 2>/dev/null || echo "node:alpine")
+BASE_IMAGE=$(cat ./build_data/base-image 2>/dev/null || echo "node:current-alpine")
 CONTEXT7_VERSION=$(cat ./build_data/version 2>/dev/null || exit 1)
 CONTEXT7_MCP_PKG="@upstash/context7-mcp@${CONTEXT7_VERSION}"
 SUPERGATEWAY_PKG='supergateway@latest'
@@ -36,7 +36,6 @@ LABEL org.opencontainers.image.source="https://github.com/mekayelanik/context7-m
 
 # Copy the entrypoint script into the container and make it executable
 COPY ./resources/ /usr/local/bin/
-
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/banner.sh \
     && chmod +r /usr/local/bin/build-timestamp.txt \
     && mkdir -p /etc/haproxy \
@@ -46,14 +45,14 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/banner.sh \
 # Install required APK packages
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories && \
     echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories && \
-    apk --update-cache --no-cache add bash shadow su-exec tzdata haproxy && \
+    apk --update-cache --no-cache add bash shadow su-exec tzdata haproxy netcat-openbsd openssl && \
     rm -rf /var/cache/apk/*
 
 # Check if package exists before installing
 RUN echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \
     if npm view ${CONTEXT7_MCP_PKG} >/dev/null 2>&1; then \
         echo "Package found, installing..." && \
-        npm install -g ${CONTEXT7_MCP_PKG} --loglevel verbose && \
+        npm install -g ${CONTEXT7_MCP_PKG} --omit=dev --no-audit --no-fund --loglevel error && \
         echo "Package installed successfully"; \
     else \
         echo "ERROR: Package ${CONTEXT7_MCP_PKG} not found in registry!" >&2; \
@@ -64,8 +63,10 @@ RUN echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \
 
 # Install Supergateway
 RUN echo "Installing Supergateway..." && \
-    npm install -g ${SUPERGATEWAY_PKG} --loglevel verbose && \
-    npm cache clean --force
+    npm install -g ${SUPERGATEWAY_PKG} --omit=dev --no-audit --no-fund --loglevel error && \
+    npm cache clean --force && \
+    rm -rf /root/.npm /tmp/* /var/tmp/* && \
+    rm -rf /usr/local/lib/node_modules/npm/man /usr/local/lib/node_modules/npm/docs /usr/local/lib/node_modules/npm/html
 
 # Use an ARG for the default port
 ARG PORT=8010

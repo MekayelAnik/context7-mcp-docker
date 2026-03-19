@@ -1,0 +1,52 @@
+name: 'Promote Docker Image Tag'
+description: 'Promotes a Docker image tag from source to target (e.g., version-DDMMYYYY to latest) across multiple registries'
+
+inputs:
+  source_tag:
+    description: 'Source tag to promote from'
+    required: true
+  target_tag:
+    description: 'Target tag to promote to'
+    required: true
+  dockerhub_repo:
+    description: 'Docker Hub repository (without tag)'
+    required: true
+  ghcr_repo:
+    description: 'GHCR repository (without tag)'
+    required: false
+    default: ''
+  registries:
+    description: 'Comma-separated list of registries to update (dockerhub,ghcr)'
+    required: false
+    default: 'dockerhub,ghcr'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Promote on Docker Hub
+      if: contains(inputs.registries, 'dockerhub')
+      shell: bash
+      run: |
+        echo "🚀 Promoting on Docker Hub"
+        echo "Source: ${{ inputs.dockerhub_repo }}:${{ inputs.source_tag }}"
+        echo "Target: ${{ inputs.dockerhub_repo }}:${{ inputs.target_tag }}"
+        
+        docker pull "${{ inputs.dockerhub_repo }}:${{ inputs.source_tag }}"
+        docker tag "${{ inputs.dockerhub_repo }}:${{ inputs.source_tag }}" "${{ inputs.dockerhub_repo }}:${{ inputs.target_tag }}"
+        docker push "${{ inputs.dockerhub_repo }}:${{ inputs.target_tag }}"
+        
+        echo "✅ Successfully promoted on Docker Hub"
+
+    - name: Promote on GHCR
+      if: contains(inputs.registries, 'ghcr') && inputs.ghcr_repo != ''
+      shell: bash
+      run: |
+        echo "🚀 Promoting on GitHub Container Registry"
+        echo "Source: ${{ inputs.ghcr_repo }}:${{ inputs.source_tag }}"
+        echo "Target: ${{ inputs.ghcr_repo }}:${{ inputs.target_tag }}"
+        
+        docker pull "${{ inputs.ghcr_repo }}:${{ inputs.source_tag }}"
+        docker tag "${{ inputs.ghcr_repo }}:${{ inputs.source_tag }}" "${{ inputs.ghcr_repo }}:${{ inputs.target_tag }}"
+        docker push "${{ inputs.ghcr_repo }}:${{ inputs.target_tag }}"
+        
+        echo "✅ Successfully promoted on GHCR"

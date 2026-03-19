@@ -1,0 +1,391 @@
+name: Context7 MCP NPM Build Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Action to perform
+        required: true
+        type: choice
+        options:
+          - auto-check
+          - build-versions
+          - promote-image
+        default: auto-check
+      versions:
+        description: Optional versions to build (comma-separated). Empty = auto from NPM.
+        required: false
+        type: string
+        default: ''
+      force_build:
+        description: Force build even if tags may already exist
+        required: false
+        type: boolean
+        default: false
+      build_profile:
+        description: Build profile
+        required: false
+        type: choice
+        options:
+          - production
+          - ci
+          - development
+          - size-optimized
+        default: production
+      base_image:
+        description: Base image override (example: node:current-alpine)
+        required: false
+        type: string
+        default: ''
+
+  repository_dispatch:
+    types: [context7-mcp-build]
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+concurrency:
+  group: context7-mcp-npm-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action || github.event_name == 'repository_dispatch' && (github.event.client_payload.action || 'external') || 'manual' }}
+  cancel-in-progress: false
+
+env:
+  NPM_PACKAGE: '@upstash/context7-mcp'
+  NPM_REGISTRY: 'https://registry.npmjs.org'
+  MAX_VERSIONS: '10'
+  TZ: ${{ vars.TZ || 'Asia/Dhaka' }}
+  PRIMARY_REGISTRY: 'ghcr'
+  DOCKERHUB_REPO: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
+  GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
+  DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64' }}
+  BASE_IMAGE_DEFAULT: ${{ github.event.inputs.base_image || github.event.client_payload.base_image || vars.BASE_IMAGE_DEFAULT || 'node:current-alpine' }}
+  EXPORT_CACHE_CONCURRENCY: '4'
+  EXPORT_LAYERS_CONCURRENCY: '4'
+  BUILDKIT_STEP_LOG_MAX_SIZE: '50000000'
+  BUILDKIT_STEP_LOG_MAX_SPEED: '100000000'
+  BUILDKIT_PROGRESS: 'plain'
+  DOCKER_BUILDKIT_INLINE_CACHE: '1'
+
+jobs:
+  fetch-releases:
+    name: Fetch and filter NPM releases
+    runs-on: ubuntu-latest
+    outputs:
+      versions_json: ${{ steps.releases.outputs.versions_json }}
+      latest_version: ${{ steps.releases.outputs.latest_version }}
+      date_tag: ${{ steps.releases.outputs.date_tag }}
+      should_build: ${{ steps.releases.outputs.should_build }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Collect stable versions
+        id: releases
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REQUESTED_ACTION="${{ github.event.inputs.action || github.event.client_payload.action || 'auto-check' }}"
+          MANUAL_VERSIONS_RAW="${{ github.event.inputs.versions || github.event.client_payload.versions || '' }}"
+
+          DATE_TAG="$(date +%d%m%Y)"
+          echo "date_tag=$DATE_TAG" >> "$GITHUB_OUTPUT"
+
+          if [[ -n "$MANUAL_VERSIONS_RAW" && "$REQUESTED_ACTION" == "build-versions" ]]; then
+            MANUAL_VERSIONS="$MANUAL_VERSIONS_RAW"
+            VERSIONS_NEWEST="$(echo "$MANUAL_VERSIONS" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d' | grep -Evi '(beta|canary)' || true)"
+
+            if [[ -z "$VERSIONS_NEWEST" ]]; then
+              echo "versions_json=[]" >> "$GITHUB_OUTPUT"
+              echo "latest_version=" >> "$GITHUB_OUTPUT"
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            LATEST_VERSION="$(echo "$VERSIONS_NEWEST" | head -n1)"
+          else
+            curl -fsSL "${NPM_REGISTRY}/${NPM_PACKAGE}" -o npm-package.json
+
+            VERSIONS_NEWEST="$({
+              jq -r '.versions | keys[]' npm-package.json \
+                | grep -Evi '(beta|canary)' \
+                | sort -Vr \
+                | head -n "${MAX_VERSIONS}"
+            } || true)"
+
+            if [[ -z "$VERSIONS_NEWEST" ]]; then
+              echo "versions_json=[]" >> "$GITHUB_OUTPUT"
+              echo "latest_version=" >> "$GITHUB_OUTPUT"
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            DIST_TAG_LATEST="$(jq -r '."dist-tags".latest // ""' npm-package.json)"
+            if [[ -n "$DIST_TAG_LATEST" ]] && echo "$VERSIONS_NEWEST" | grep -qx "$DIST_TAG_LATEST"; then
+              LATEST_VERSION="$DIST_TAG_LATEST"
+            else
+              LATEST_VERSION="$(echo "$VERSIONS_NEWEST" | head -n1)"
+            fi
+          fi
+
+          VERSIONS_JSON="$(echo "$VERSIONS_NEWEST" | jq -R -s -c --arg date "$DATE_TAG" --arg latest "$LATEST_VERSION" '
+            split("\n")
+            | map(select(length > 0))
+            | map({
+                version: .,
+                image_tag: (. + "-" + $date),
+                promote_latest: (. == $latest)
+              })
+          ')"
+
+          echo "versions_json=$VERSIONS_JSON" >> "$GITHUB_OUTPUT"
+          echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+
+          echo "Stable versions selected (newest first):"
+          echo "$VERSIONS_NEWEST"
+          echo "Latest stable: $LATEST_VERSION"
+
+  build-versions:
+    name: Build ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    needs: [fetch-releases]
+    if: needs.fetch-releases.outputs.should_build == 'true' && (github.event_name == 'repository_dispatch' || github.event.inputs.action != 'promote-image')
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJson(needs.fetch-releases.outputs.versions_json) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve build profile
+        id: profile
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROFILE="${{ github.event.inputs.build_profile || 'production' }}"
+
+          case "$PROFILE" in
+            development|dev)
+              CT=gzip
+              CL=1
+              ;;
+            ci|continuous-integration)
+              CT=zstd
+              CL=3
+              ;;
+            size-optimized)
+              CT=gzip
+              CL=9
+              ;;
+            production|prod|*)
+              CT=zstd
+              CL=22
+              ;;
+          esac
+
+          if [[ "$CT" == "zstd" ]]; then
+            CP="compression=zstd,compression-level=${CL},force-compression=true"
+          else
+            CP="compression=gzip,compression-level=${CL},force-compression=true"
+          fi
+
+          echo "compression_type=$CT" >> "$GITHUB_OUTPUT"
+          echo "compression_level=$CL" >> "$GITHUB_OUTPUT"
+          echo "compression_params=$CP" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check existing tags
+        id: check-existing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FORCE_BUILD="${{ github.event.inputs.force_build || github.event.client_payload.force_build || 'false' }}"
+
+          if [[ "$FORCE_BUILD" == "true" ]]; then
+            echo "skip_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Prefer Docker Hub existence checks for skip logic.
+          EXISTS_DOCKERHUB=false
+          EXISTS_GHCR=false
+
+          if docker manifest inspect "${DOCKERHUB_REPO}:${{ matrix.image_tag }}" >/dev/null 2>&1; then
+            EXISTS_DOCKERHUB=true
+          fi
+
+          if docker manifest inspect "${GHCR_REPO}:${{ matrix.image_tag }}" >/dev/null 2>&1; then
+            EXISTS_GHCR=true
+          fi
+
+          # Build only when the preferred registry (Docker Hub) is missing this version tag.
+          if [[ "$EXISTS_DOCKERHUB" == "true" ]]; then
+            echo "skip_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate Dockerfile via DockerfileModifier.sh
+        if: steps.check-existing.outputs.skip_build != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Using base image: ${BASE_IMAGE_DEFAULT}"
+          mkdir -p build_data
+          echo "${BASE_IMAGE_DEFAULT}" > ./build_data/base-image
+          echo "${{ matrix.version }}" > ./build_data/version
+          touch ./build_data/build
+          bash ./DockerfileModifier.sh
+          test -f ./Dockerfile.context7-mcp
+
+      - name: Build and push image
+        if: steps.check-existing.outputs.skip_build != 'true'
+        env:
+          BUILDKIT_STEP_LOG_MAX_SIZE: ${{ env.BUILDKIT_STEP_LOG_MAX_SIZE }}
+          BUILDKIT_STEP_LOG_MAX_SPEED: ${{ env.BUILDKIT_STEP_LOG_MAX_SPEED }}
+          BUILDKIT_PROGRESS: ${{ env.BUILDKIT_PROGRESS }}
+          DOCKER_BUILDKIT_INLINE_CACHE: ${{ env.DOCKER_BUILDKIT_INLINE_CACHE }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.context7-mcp
+          push: true
+          platforms: ${{ env.DEFAULT_PLATFORMS }}
+          tags: |
+            ${{ env.GHCR_REPO }}:${{ matrix.image_tag }}
+            ${{ env.GHCR_REPO }}:${{ matrix.version }}
+          cache-from: |
+            type=registry,ref=${{ env.GHCR_REPO }}:buildcache-${{ matrix.version }}
+            type=registry,ref=${{ env.DOCKERHUB_REPO }}:buildcache-${{ matrix.version }}
+          cache-to: |
+            type=registry,ref=${{ env.GHCR_REPO }}:buildcache-${{ matrix.version }},mode=max
+            type=registry,ref=${{ env.DOCKERHUB_REPO }}:buildcache-${{ matrix.version }},mode=max
+          outputs: type=registry,oci-mediatypes=true,${{ steps.profile.outputs.compression_params }},export-cache-concurrency=${{ env.EXPORT_CACHE_CONCURRENCY }},export-layers-concurrency=${{ env.EXPORT_LAYERS_CONCURRENCY }}
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            CONTEXT7_VERSION=${{ matrix.version }}
+            BASE_IMAGE=${{ env.BASE_IMAGE_DEFAULT }}
+          provenance: false
+          sbom: false
+
+      - name: Sync Docker Hub from GHCR (secondary mirror)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for TAG in "${{ matrix.image_tag }}" "${{ matrix.version }}"; do
+            if docker pull "${GHCR_REPO}:${TAG}" >/dev/null 2>&1; then
+              docker tag "${GHCR_REPO}:${TAG}" "${DOCKERHUB_REPO}:${TAG}"
+              docker push "${DOCKERHUB_REPO}:${TAG}" >/dev/null
+            else
+              echo "GHCR source tag missing: ${GHCR_REPO}:${TAG}" >&2
+              exit 1
+            fi
+          done
+
+  promote-latest:
+    name: Promote latest tag
+    runs-on: ubuntu-latest
+    needs: [fetch-releases, build-versions]
+    if: |
+      always() &&
+      needs.fetch-releases.outputs.latest_version != '' &&
+      (needs.build-versions.result == 'success' || github.event.inputs.action == 'promote-image')
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote latest in registries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LATEST_VERSION="${{ needs.fetch-releases.outputs.latest_version }}"
+          DATE_TAG="${{ needs.fetch-releases.outputs.date_tag }}"
+          SOURCE_DATE_TAG="${LATEST_VERSION}-${DATE_TAG}"
+          SOURCE_FALLBACK_TAG="${LATEST_VERSION}"
+
+          # GHCR is primary source of truth for promotion.
+          SOURCE_TAG_GHCR=""
+          if docker pull "${GHCR_REPO}:${SOURCE_DATE_TAG}" >/dev/null 2>&1; then
+            SOURCE_TAG_GHCR="$SOURCE_DATE_TAG"
+          elif docker pull "${GHCR_REPO}:${SOURCE_FALLBACK_TAG}" >/dev/null 2>&1; then
+            SOURCE_TAG_GHCR="$SOURCE_FALLBACK_TAG"
+          else
+            echo "Could not resolve GHCR source tag for latest promotion"
+            exit 1
+          fi
+
+          docker tag "${GHCR_REPO}:${SOURCE_TAG_GHCR}" "${GHCR_REPO}:latest"
+          docker push "${GHCR_REPO}:latest"
+
+          # Promote Docker Hub from the already pulled GHCR source image.
+          docker tag "${GHCR_REPO}:${SOURCE_TAG_GHCR}" "${DOCKERHUB_REPO}:latest"
+          docker push "${DOCKERHUB_REPO}:latest"
+
+      - name: Verify latest tag points to detected latest version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LATEST_VERSION="${{ needs.fetch-releases.outputs.latest_version }}"
+
+          GHCR_VERSION_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:${LATEST_VERSION}" | awk '/^Digest:/ {print $2; exit}')"
+          GHCR_LATEST_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:latest" | awk '/^Digest:/ {print $2; exit}')"
+          DH_LATEST_DIGEST="$(docker buildx imagetools inspect "${DOCKERHUB_REPO}:latest" | awk '/^Digest:/ {print $2; exit}')"
+
+          if [[ -z "$GHCR_VERSION_DIGEST" || -z "$GHCR_LATEST_DIGEST" || -z "$DH_LATEST_DIGEST" ]]; then
+            echo "Digest resolution failed during latest verification" >&2
+            exit 1
+          fi
+
+          if [[ "$GHCR_VERSION_DIGEST" != "$GHCR_LATEST_DIGEST" ]]; then
+            echo "GHCR latest tag does not match latest version tag (${LATEST_VERSION})" >&2
+            exit 1
+          fi
+
+          if [[ "$GHCR_LATEST_DIGEST" != "$DH_LATEST_DIGEST" ]]; then
+            echo "Docker Hub latest digest does not match GHCR latest digest" >&2
+            exit 1
+          fi
+
+          echo "Latest tag verification passed for version ${LATEST_VERSION}"
