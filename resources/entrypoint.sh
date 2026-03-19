@@ -11,7 +11,7 @@ readonly DEFAULT_TLS_DAYS=365
 readonly DEFAULT_TLS_CN="localhost"
 readonly DEFAULT_TLS_MIN_VERSION="TLSv1.3"
 readonly DEFAULT_HTTP_VERSION_MODE="auto"
-readonly SAFE_API_KEY_REGEX='^[A-Za-z0-9_:.@+=-]+$'
+readonly SAFE_API_KEY_REGEX='^[[:graph:]]+$'
 readonly MIN_API_KEY_LEN=5
 readonly MAX_API_KEY_LEN=256
 readonly FIRST_RUN_FILE="/tmp/first_run_complete"
@@ -123,7 +123,7 @@ validate_api_key() {
     fi
 
     if [[ ! "$API_KEY" =~ $SAFE_API_KEY_REGEX ]]; then
-        echo "Invalid API_KEY format. Refusing to start with malformed API key." >&2
+        echo "Invalid API_KEY format. Refusing to start with malformed API key (whitespace/control chars are not allowed)." >&2
         exit 1
     fi
 
