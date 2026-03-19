@@ -59,7 +59,7 @@ env:
   DOCKERHUB_REPO: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
   GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64' }}
-  BASE_IMAGE_DEFAULT: ${{ vars.BASE_IMAGE_DEFAULT || 'node:current-alpine' }}
+  BASE_IMAGE_DEFAULT: ${{ github.event.inputs.base_image || vars.BASE_IMAGE_DEFAULT || 'node:current-alpine' }}
   EXPORT_CACHE_CONCURRENCY: '4'
   EXPORT_LAYERS_CONCURRENCY: '4'
   BUILDKIT_STEP_LOG_MAX_SIZE: '50000000'
