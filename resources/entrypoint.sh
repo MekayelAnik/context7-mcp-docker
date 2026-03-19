@@ -11,7 +11,7 @@ readonly DEFAULT_TLS_DAYS=365
 readonly DEFAULT_TLS_CN="localhost"
 readonly DEFAULT_TLS_MIN_VERSION="TLSv1.3"
 readonly DEFAULT_HTTP_VERSION_MODE="auto"
-readonly SAFE_API_KEY_REGEX='^[A-Za-z0-9_:.@+=-]{5,128}$'
+readonly SAFE_API_KEY_REGEX='^[A-Za-z0-9_:.@+=-]{5,256}$'
 readonly FIRST_RUN_FILE="/tmp/first_run_complete"
 readonly HAPROXY_SERVER_NAME="ctx7"
 readonly HAPROXY_TEMPLATE="/etc/haproxy/haproxy.cfg.template"
