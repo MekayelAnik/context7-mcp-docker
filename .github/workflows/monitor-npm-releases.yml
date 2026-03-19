@@ -97,19 +97,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          re='^[A-Za-z0-9_:.@+=-]+$'
+          bash .github/scripts/test-api-key-validation.sh
 
-          good='ctx7_0YZjrf7WfrjrYSw1aMpqJ931y6JR4H48luF5ZtJEFO8dskCRDnafZfLpbdqsJjdqm2I7pfEY71YxfxTs0QvY7uBJJyMmRLQte9hKxPuJNjeWcLUd5vRZ3ZnHuMFFbxm9'
-          bad_space='ctx7_bad key'
-          short='abcd'
-          long="$(printf 'a%.0s' {1..257})"
+      - name: Validate runtime HTTPS/HTTP/cert behavior
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          [[ "$good" =~ $re ]] && [[ ${#good} -ge 5 && ${#good} -le 256 ]]
-          ! [[ "$bad_space" =~ $re ]]
-          ! { [[ "$short" =~ $re ]] && [[ ${#short} -ge 5 && ${#short} -le 256 ]]; }
-          ! { [[ "$long" =~ $re ]] && [[ ${#long} -ge 5 && ${#long} -le 256 ]]; }
-
-          echo "api_key_validation_ok"
+          bash .github/scripts/test-runtime-behavior.sh
 
   fetch-releases:
     name: Fetch and filter NPM releases
