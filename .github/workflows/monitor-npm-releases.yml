@@ -297,13 +297,13 @@ jobs:
           set -euo pipefail
 
           for TAG in "${{ matrix.image_tag }}" "${{ matrix.version }}"; do
-            if docker pull "${GHCR_REPO}:${TAG}" >/dev/null 2>&1; then
-              docker tag "${GHCR_REPO}:${TAG}" "${DOCKERHUB_REPO}:${TAG}"
-              docker push "${DOCKERHUB_REPO}:${TAG}" >/dev/null
-            else
+            if ! docker buildx imagetools inspect "${GHCR_REPO}:${TAG}" >/dev/null 2>&1; then
               echo "GHCR source tag missing: ${GHCR_REPO}:${TAG}" >&2
               exit 1
             fi
+
+            # Copy manifest list directly to preserve all platforms.
+            docker buildx imagetools create -t "${DOCKERHUB_REPO}:${TAG}" "${GHCR_REPO}:${TAG}" >/dev/null
           done
 
   promote-latest:
@@ -343,21 +343,18 @@ jobs:
 
           # GHCR is primary source of truth for promotion.
           SOURCE_TAG_GHCR=""
-          if docker pull "${GHCR_REPO}:${SOURCE_DATE_TAG}" >/dev/null 2>&1; then
+          if docker buildx imagetools inspect "${GHCR_REPO}:${SOURCE_DATE_TAG}" >/dev/null 2>&1; then
             SOURCE_TAG_GHCR="$SOURCE_DATE_TAG"
-          elif docker pull "${GHCR_REPO}:${SOURCE_FALLBACK_TAG}" >/dev/null 2>&1; then
+          elif docker buildx imagetools inspect "${GHCR_REPO}:${SOURCE_FALLBACK_TAG}" >/dev/null 2>&1; then
             SOURCE_TAG_GHCR="$SOURCE_FALLBACK_TAG"
           else
             echo "Could not resolve GHCR source tag for latest promotion"
             exit 1
           fi
 
-          docker tag "${GHCR_REPO}:${SOURCE_TAG_GHCR}" "${GHCR_REPO}:latest"
-          docker push "${GHCR_REPO}:latest"
-
-          # Promote Docker Hub from the already pulled GHCR source image.
-          docker tag "${GHCR_REPO}:${SOURCE_TAG_GHCR}" "${DOCKERHUB_REPO}:latest"
-          docker push "${DOCKERHUB_REPO}:latest"
+          # Promote by copying manifest lists, preserving multi-arch images.
+          docker buildx imagetools create -t "${GHCR_REPO}:latest" "${GHCR_REPO}:${SOURCE_TAG_GHCR}" >/dev/null
+          docker buildx imagetools create -t "${DOCKERHUB_REPO}:latest" "${GHCR_REPO}:${SOURCE_TAG_GHCR}" >/dev/null
 
       - name: Verify latest tag points to detected latest version
         shell: bash
@@ -366,22 +363,34 @@ jobs:
 
           LATEST_VERSION="${{ needs.fetch-releases.outputs.latest_version }}"
 
-          GHCR_VERSION_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:${LATEST_VERSION}" | awk '/^Digest:/ {print $2; exit}')"
-          GHCR_LATEST_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:latest" | awk '/^Digest:/ {print $2; exit}')"
-          DH_LATEST_DIGEST="$(docker buildx imagetools inspect "${DOCKERHUB_REPO}:latest" | awk '/^Digest:/ {print $2; exit}')"
+          mapfile -t GHCR_VERSION_PLATFORMS < <(docker buildx imagetools inspect "${GHCR_REPO}:${LATEST_VERSION}" | awk '/Platform:/{print $2}' | sort -u)
+          mapfile -t GHCR_LATEST_PLATFORMS < <(docker buildx imagetools inspect "${GHCR_REPO}:latest" | awk '/Platform:/{print $2}' | sort -u)
+          mapfile -t DH_LATEST_PLATFORMS < <(docker buildx imagetools inspect "${DOCKERHUB_REPO}:latest" | awk '/Platform:/{print $2}' | sort -u)
 
-          if [[ -z "$GHCR_VERSION_DIGEST" || -z "$GHCR_LATEST_DIGEST" || -z "$DH_LATEST_DIGEST" ]]; then
-            echo "Digest resolution failed during latest verification" >&2
+          if [[ "${#GHCR_VERSION_PLATFORMS[@]}" -eq 0 || "${#GHCR_LATEST_PLATFORMS[@]}" -eq 0 || "${#DH_LATEST_PLATFORMS[@]}" -eq 0 ]]; then
+            echo "Platform list resolution failed during latest verification" >&2
             exit 1
           fi
 
-          if [[ "$GHCR_VERSION_DIGEST" != "$GHCR_LATEST_DIGEST" ]]; then
-            echo "GHCR latest tag does not match latest version tag (${LATEST_VERSION})" >&2
+          GHCR_VERSION_PLATFORMS_STR="$(printf '%s\n' "${GHCR_VERSION_PLATFORMS[@]}")"
+          GHCR_LATEST_PLATFORMS_STR="$(printf '%s\n' "${GHCR_LATEST_PLATFORMS[@]}")"
+          DH_LATEST_PLATFORMS_STR="$(printf '%s\n' "${DH_LATEST_PLATFORMS[@]}")"
+
+          if [[ "$GHCR_VERSION_PLATFORMS_STR" != "$GHCR_LATEST_PLATFORMS_STR" ]]; then
+            echo "GHCR latest platforms do not match latest version tag (${LATEST_VERSION})" >&2
+            echo "Version platforms:" >&2
+            echo "$GHCR_VERSION_PLATFORMS_STR" >&2
+            echo "Latest platforms:" >&2
+            echo "$GHCR_LATEST_PLATFORMS_STR" >&2
             exit 1
           fi
 
-          if [[ "$GHCR_LATEST_DIGEST" != "$DH_LATEST_DIGEST" ]]; then
-            echo "Docker Hub latest digest does not match GHCR latest digest" >&2
+          if [[ "$GHCR_LATEST_PLATFORMS_STR" != "$DH_LATEST_PLATFORMS_STR" ]]; then
+            echo "Docker Hub latest platforms do not match GHCR latest platforms" >&2
+            echo "GHCR latest platforms:" >&2
+            echo "$GHCR_LATEST_PLATFORMS_STR" >&2
+            echo "Docker Hub latest platforms:" >&2
+            echo "$DH_LATEST_PLATFORMS_STR" >&2
             exit 1
           fi
 
