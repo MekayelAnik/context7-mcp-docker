@@ -130,7 +130,9 @@ jobs:
             fi
           fi
 
-          VERSIONS_JSON="$(echo "$VERSIONS_NEWEST" | jq -R -s -c --arg date "$DATE_TAG" --arg latest "$LATEST_VERSION" '
+          VERSIONS_OLDEST="$(echo "$VERSIONS_NEWEST" | sort -V)"
+
+          VERSIONS_JSON="$(echo "$VERSIONS_OLDEST" | jq -R -s -c --arg date "$DATE_TAG" --arg latest "$LATEST_VERSION" '
             split("\n")
             | map(select(length > 0))
             | map({
@@ -144,8 +146,8 @@ jobs:
           echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
           echo "should_build=true" >> "$GITHUB_OUTPUT"
 
-          echo "Stable versions selected (newest first):"
-          echo "$VERSIONS_NEWEST"
+          echo "Stable versions selected for build (oldest first):"
+          echo "$VERSIONS_OLDEST"
           echo "Latest stable: $LATEST_VERSION"
 
   build-versions:
@@ -155,7 +157,7 @@ jobs:
     if: needs.fetch-releases.outputs.should_build == 'true' && (github.event_name == 'repository_dispatch' || github.event.inputs.action != 'promote-image')
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         include: ${{ fromJson(needs.fetch-releases.outputs.versions_json) }}
 
@@ -232,22 +234,17 @@ jobs:
             exit 0
           fi
 
-          # Prefer Docker Hub existence checks for skip logic.
-          EXISTS_DOCKERHUB=false
-          EXISTS_GHCR=false
-
-          if docker manifest inspect "${DOCKERHUB_REPO}:${{ matrix.image_tag }}" >/dev/null 2>&1; then
-            EXISTS_DOCKERHUB=true
+          # Non-force mode: skip if this version already exists in primary repo (GHCR).
+          EXISTS_GHCR_VERSION=false
+          if docker manifest inspect "${GHCR_REPO}:${{ matrix.version }}" >/dev/null 2>&1; then
+            EXISTS_GHCR_VERSION=true
           fi
 
-          if docker manifest inspect "${GHCR_REPO}:${{ matrix.image_tag }}" >/dev/null 2>&1; then
-            EXISTS_GHCR=true
-          fi
-
-          # Build only when the preferred registry (Docker Hub) is missing this version tag.
-          if [[ "$EXISTS_DOCKERHUB" == "true" ]]; then
+          if [[ "$EXISTS_GHCR_VERSION" == "true" ]]; then
+            echo "Image version already present in GHCR; skipping build"
             echo "skip_build=true" >> "$GITHUB_OUTPUT"
           else
+            echo "Image version not found in GHCR; building"
             echo "skip_build=false" >> "$GITHUB_OUTPUT"
           fi
 
