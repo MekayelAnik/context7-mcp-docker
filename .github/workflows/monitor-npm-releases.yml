@@ -33,7 +33,7 @@ on:
           - size-optimized
         default: production
       base_image:
-        description: Base image override (example: node:current-alpine)
+        description: 'Base image override (example: node:current-alpine)'
         required: false
         type: string
         default: ''
