@@ -68,9 +68,53 @@ env:
   DOCKER_BUILDKIT_INLINE_CACHE: '1'
 
 jobs:
+  preflight:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate workflow YAML and shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import yaml
+          from pathlib import Path
+          p = Path('.github/workflows/monitor-npm-releases.yml')
+          yaml.safe_load(p.read_text(encoding='utf-8'))
+          print('workflow_yaml_ok')
+          PY
+
+          bash -n resources/entrypoint.sh
+          bash -n DockerfileModifier.sh
+          echo "script_syntax_ok"
+
+      - name: Validate API key rules
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          re='^[A-Za-z0-9_:.@+=-]+$'
+
+          good='ctx7_0YZjrf7WfrjrYSw1aMpqJ931y6JR4H48luF5ZtJEFO8dskCRDnafZfLpbdqsJjdqm2I7pfEY71YxfxTs0QvY7uBJJyMmRLQte9hKxPuJNjeWcLUd5vRZ3ZnHuMFFbxm9'
+          bad_space='ctx7_bad key'
+          short='abcd'
+          long="$(printf 'a%.0s' {1..257})"
+
+          [[ "$good" =~ $re ]] && [[ ${#good} -ge 5 && ${#good} -le 256 ]]
+          ! [[ "$bad_space" =~ $re ]]
+          ! { [[ "$short" =~ $re ]] && [[ ${#short} -ge 5 && ${#short} -le 256 ]]; }
+          ! { [[ "$long" =~ $re ]] && [[ ${#long} -ge 5 && ${#long} -le 256 ]]; }
+
+          echo "api_key_validation_ok"
+
   fetch-releases:
     name: Fetch and filter NPM releases
     runs-on: ubuntu-latest
+    needs: [preflight]
     outputs:
       versions_json: ${{ steps.releases.outputs.versions_json }}
       latest_version: ${{ steps.releases.outputs.latest_version }}
