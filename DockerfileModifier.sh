@@ -37,7 +37,7 @@ LABEL org.opencontainers.image.source="https://github.com/mekayelanik/context7-m
 # Copy the entrypoint script into the container and make it executable
 COPY ./resources/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/banner.sh \
-    && chmod +r /usr/local/bin/build-timestamp.txt \
+    && if [ -f /usr/local/bin/build-timestamp.txt ]; then chmod +r /usr/local/bin/build-timestamp.txt; fi \
     && mkdir -p /etc/haproxy \
     && mv -vf /usr/local/bin/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template \
     && ls -la /etc/haproxy/haproxy.cfg.template
