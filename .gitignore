@@ -1,9 +1,11 @@
 build_logs
+build_data
 resources/build_data
 resources/build-timestamp
 resources/tag
 Dockerfile.context7-mcp
 /.vs
+example/
 /Dockerfile.context7-mcp
 /Dockerfile
 .buildx-cache

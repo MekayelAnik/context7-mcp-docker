@@ -100,11 +100,16 @@ services:
       - "8010:8010"
     environment:
       - PORT=8010
+      - INTERNAL_PORT=38011
       - PUID=1000
       - PGID=1000
       - TZ=Asia/Dhaka
       - NODE_ENV=production
       - PROTOCOL=SHTTP
+      - ENABLE_HTTPS=true
+      - HTTP_VERSION_MODE=auto
+      # Optional: require Bearer token auth at HAProxy layer
+      # - API_KEY=replace-with-strong-secret
     hostname: context7-mcp
     domainname: local
 ```
@@ -123,11 +128,14 @@ docker run -d \
   --restart=unless-stopped \
   -p 8010:8010 \
   -e PORT=8010 \
+  -e INTERNAL_PORT=38011 \
   -e PUID=1000 \
   -e PGID=1000 \
   -e TZ=Asia/Dhaka \
   -e NODE_ENV=production \
   -e PROTOCOL=SHTTP \
+  -e ENABLE_HTTPS=true \
+  -e HTTP_VERSION_MODE=auto \
   mekayelanik/context7-mcp:stable
 ```
 
@@ -138,6 +146,14 @@ docker run -d \
 | **HTTP** | `http://host-ip:8010/mcp` | Best compatibility (recommended) |
 | **SSE** | `http://host-ip:8010/sse` | Real-time streaming |
 | **WebSocket** | `ws://host-ip:8010/message` | Bidirectional communication |
+
+When HTTPS is enabled (default), use TLS endpoints:
+
+| Protocol | Endpoint |
+|:---------|:---------|
+| **SHTTP** | `https://host-ip:8010/mcp` |
+| **SSE** | `https://host-ip:8010/sse` |
+| **WebSocket** | `wss://host-ip:8010/message` |
 
 > ⏱️ **ARM Devices:** Allow 30-60 seconds for initialization before accessing endpoints.
 
@@ -150,11 +166,36 @@ docker run -d \
 | Variable | Default | Description |
 |:---------|:-------:|:------------|
 | `PORT` | `8010` | Internal server port |
+| `INTERNAL_PORT` | `38011` | Internal MCP server port used by supergateway |
 | `PUID` | `1000` | User ID for file permissions |
 | `PGID` | `1000` | Group ID for file permissions |
 | `TZ` | `Asia/Dhaka` | Container timezone ([TZ database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)) |
 | `NODE_ENV` | `production` | Node.js environment |
 | `PROTOCOL` | `SHTTP` | Default transport protocol |
+| `API_KEY` | *(empty)* | Enables Bearer token auth (`Authorization: Bearer <API_KEY>`) |
+| `CORS` | *(empty)* | Comma-separated CORS origins, supports `*` |
+| `ENABLE_HTTPS` | `true` | Enables TLS termination in HAProxy |
+| `TLS_CERT_PATH` | `/etc/haproxy/certs/server.crt` | TLS cert path |
+| `TLS_KEY_PATH` | `/etc/haproxy/certs/server.key` | TLS private key path |
+| `TLS_PEM_PATH` | `/etc/haproxy/certs/server.pem` | Combined PEM file used by HAProxy |
+| `TLS_CN` | `localhost` | CN for auto-generated certificate |
+| `TLS_SAN` | `DNS:<TLS_CN>` | SAN for auto-generated certificate |
+| `TLS_DAYS` | `365` | Auto-generated cert validity period |
+| `TLS_MIN_VERSION` | `TLSv1.3` | Minimum TLS protocol (`TLSv1.2` or `TLSv1.3`) |
+| `HTTP_VERSION_MODE` | `auto` | `auto`, `all`, `h1`, `h2`, `h3`, `h1+h2` |
+| `DEBUG_MODE` | *(empty)* | Enables debug hold mode when set truthy |
+
+### HTTPS and HTTP Version Notes
+
+- If `ENABLE_HTTPS=true` and cert files are missing, the container auto-generates a self-signed certificate.
+- If `TLS_CERT_PATH` and `TLS_KEY_PATH` exist, they are merged into `TLS_PEM_PATH` and used directly.
+- `HTTP_VERSION_MODE=h3` (or `auto`) enables HTTP/3 only when HAProxy build includes QUIC; otherwise it safely falls back.
+
+### API Key Authentication Notes
+
+- Set `API_KEY` to enforce authentication at reverse proxy level.
+- Expected header format: `Authorization: Bearer <API_KEY>`.
+- Localhost health checks remain accessible for liveness/readiness.
 
 ### User & Group IDs
 
@@ -429,6 +470,8 @@ sudo chown -R 1000:1000 /path/to/volume
 # Test connectivity
 curl http://localhost:8010/mcp
 curl http://host-ip:8010/mcp
+curl -k https://localhost:8010/mcp
+curl -k https://host-ip:8010/mcp
 
 # Check firewall
 sudo ufw status
