@@ -498,7 +498,7 @@ main() {
     PORT="${PORT:-$DEFAULT_PORT}"
     INTERNAL_PORT="${INTERNAL_PORT:-$DEFAULT_INTERNAL_PORT}"
     PROTOCOL="${PROTOCOL:-$DEFAULT_PROTOCOL}"
-    ENABLE_HTTPS="${ENABLE_HTTPS:-true}"
+    ENABLE_HTTPS="${ENABLE_HTTPS:-false}"
     TLS_CERT_PATH="${TLS_CERT_PATH:-/etc/haproxy/certs/server.crt}"
     TLS_KEY_PATH="${TLS_KEY_PATH:-/etc/haproxy/certs/server.key}"
     TLS_PEM_PATH="${TLS_PEM_PATH:-/etc/haproxy/certs/server.pem}"
@@ -545,6 +545,18 @@ main() {
         echo "HTTP versions enabled: ${EFFECTIVE_HTTP_VERSIONS}"
     else
         echo "HTTPS disabled; listening on HTTP port ${PORT}"
+        echo "WARNING: Traffic is NOT encrypted when ENABLE_HTTPS=false." >&2
+        echo "WARNING: Use ENABLE_HTTPS=true for internet-facing or untrusted networks." >&2
+        if [[ "${NODE_ENV:-}" =~ ^([Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn])$ ]]; then
+            echo "====================================================================" >&2
+            echo "SECURITY WARNING: NODE_ENV=production with ENABLE_HTTPS=false" >&2
+            echo "SECURITY WARNING: Requests and responses are plaintext over the network." >&2
+            echo "SECURITY WARNING: Enable TLS now by setting ENABLE_HTTPS=true." >&2
+            echo "====================================================================" >&2
+        fi
+        if [[ -n "$API_KEY" ]]; then
+            echo "WARNING: API_KEY protects access but does not encrypt HTTP traffic." >&2
+        fi
     fi
 
     wait -n "$MCP_PID" "$HAPROXY_PID"
