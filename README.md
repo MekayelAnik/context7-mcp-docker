@@ -105,8 +105,8 @@ services:
       - PGID=1000
       - TZ=Asia/Dhaka
       - NODE_ENV=production
-      - PROTOCOL=SHTTP
-      - ENABLE_HTTPS=true
+      - PROTOCOL=HTTP
+      - ENABLE_HTTPS=false
       - HTTP_VERSION_MODE=auto
       # Optional: require Bearer token auth at HAProxy layer
       # - API_KEY=replace-with-strong-secret
@@ -133,8 +133,8 @@ docker run -d \
   -e PGID=1000 \
   -e TZ=Asia/Dhaka \
   -e NODE_ENV=production \
-  -e PROTOCOL=SHTTP \
-  -e ENABLE_HTTPS=true \
+  -e PROTOCOL=HTTP \
+  -e ENABLE_HTTPS=false \
   -e HTTP_VERSION_MODE=auto \
   mekayelanik/context7-mcp:stable
 ```
@@ -147,7 +147,7 @@ docker run -d \
 | **SSE** | `http://host-ip:8010/sse` | Real-time streaming |
 | **WebSocket** | `ws://host-ip:8010/message` | Bidirectional communication |
 
-When HTTPS is enabled (default), use TLS endpoints:
+When HTTPS is enabled (`ENABLE_HTTPS=true`), use TLS endpoints:
 
 | Protocol | Endpoint |
 |:---------|:---------|
@@ -155,6 +155,8 @@ When HTTPS is enabled (default), use TLS endpoints:
 | **SSE** | `https://host-ip:8010/sse` |
 | **WebSocket** | `wss://host-ip:8010/message` |
 
+> ⚠️ **Security Warning:** The container now defaults to HTTP (`ENABLE_HTTPS=false`) for easier local setup. Use `ENABLE_HTTPS=true` for production, public networks, or any untrusted environment.
+>
 > ⏱️ **ARM Devices:** Allow 30-60 seconds for initialization before accessing endpoints.
 
 ---
@@ -174,7 +176,7 @@ When HTTPS is enabled (default), use TLS endpoints:
 | `PROTOCOL` | `SHTTP` | Default transport protocol |
 | `API_KEY` | *(empty)* | Enables Bearer token auth (`Authorization: Bearer <API_KEY>`) |
 | `CORS` | *(empty)* | Comma-separated CORS origins, supports `*` |
-| `ENABLE_HTTPS` | `true` | Enables TLS termination in HAProxy |
+| `ENABLE_HTTPS` | `false` | Enables TLS termination in HAProxy |
 | `TLS_CERT_PATH` | `/etc/haproxy/certs/server.crt` | TLS cert path |
 | `TLS_KEY_PATH` | `/etc/haproxy/certs/server.key` | TLS private key path |
 | `TLS_PEM_PATH` | `/etc/haproxy/certs/server.pem` | Combined PEM file used by HAProxy |
