@@ -166,7 +166,10 @@ jobs:
     if: |
       always() &&
       needs.fetch-releases.outputs.latest_version != '' &&
-      (needs.build-versions.result == 'success' || needs.fetch-releases.outputs.normalized_action == 'promote-latest')
+      (
+        needs.fetch-releases.outputs.normalized_action == 'promote-latest' ||
+        (needs.fetch-releases.outputs.normalized_action == 'auto-check' && needs.build-versions.result == 'success')
+      )
     uses: ./.github/workflows/reusable-promote-latest.yml
     with:
       latest_version: ${{ needs.fetch-releases.outputs.latest_version }}
