@@ -1,0 +1,59 @@
+name: Reusable Promote Latest
+
+on:
+  workflow_call:
+    inputs:
+      latest_version:
+        description: Latest stable version
+        required: true
+        type: string
+      date_tag:
+        description: Date tag suffix
+        required: true
+        type: string
+      ghcr_repo:
+        description: GHCR repository
+        required: true
+        type: string
+      dockerhub_repo:
+        description: Docker Hub repository
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        description: Docker Hub username
+        required: true
+      DOCKERHUB_TOKEN:
+        description: Docker Hub token
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote-latest:
+    name: Promote latest tag
+    runs-on: ubuntu-latest
+    if: inputs.latest_version != ''
+    steps:
+      - name: Setup promotion environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          do_checkout: 'true'
+          setup_qemu: 'false'
+          setup_buildx: 'true'
+          login_dockerhub: 'true'
+          login_ghcr: 'true'
+          dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+          ghcr_actor: ${{ github.actor }}
+          ghcr_token: ${{ github.token }}
+
+      - name: Promote latest and verify parity
+        uses: ./.github/actions/promote-latest
+        with:
+          latest_version: ${{ inputs.latest_version }}
+          date_tag: ${{ inputs.date_tag }}
+          ghcr_repo: ${{ inputs.ghcr_repo }}
+          dockerhub_repo: ${{ inputs.dockerhub_repo }}

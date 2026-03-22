@@ -1,0 +1,174 @@
+name: Reusable Build Versions
+
+on:
+  workflow_call:
+    inputs:
+      versions_json:
+        description: JSON matrix include payload for versions
+        required: true
+        type: string
+      build_profile:
+        description: Build profile
+        required: false
+        type: string
+        default: production
+      force_build:
+        description: Force build even if tags may already exist
+        required: false
+        type: string
+        default: 'false'
+      base_image_default:
+        description: Base image used by DockerfileModifier
+        required: true
+        type: string
+      ghcr_repo:
+        description: GHCR repository
+        required: true
+        type: string
+      dockerhub_repo:
+        description: Docker Hub repository
+        required: true
+        type: string
+      default_platforms:
+        description: Build platforms
+        required: true
+        type: string
+      export_cache_concurrency:
+        description: Buildx export cache concurrency
+        required: false
+        type: string
+        default: '4'
+      export_layers_concurrency:
+        description: Buildx export layers concurrency
+        required: false
+        type: string
+        default: '4'
+      buildkit_step_log_max_size:
+        description: BuildKit step log max size
+        required: false
+        type: string
+        default: '50000000'
+      buildkit_step_log_max_speed:
+        description: BuildKit step log max speed
+        required: false
+        type: string
+        default: '100000000'
+      buildkit_progress:
+        description: BuildKit progress mode
+        required: false
+        type: string
+        default: plain
+      docker_buildkit_inline_cache:
+        description: BuildKit inline cache
+        required: false
+        type: string
+        default: '1'
+    secrets:
+      DOCKERHUB_USERNAME:
+        description: Docker Hub username
+        required: true
+      DOCKERHUB_TOKEN:
+        description: Docker Hub token
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-versions:
+    name: Build ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJson(inputs.versions_json) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve build profile
+        id: profile
+        uses: ./.github/actions/resolve-build-profile
+        with:
+          build_profile: ${{ inputs.build_profile }}
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          do_checkout: 'false'
+          setup_qemu: 'true'
+          setup_buildx: 'true'
+          login_dockerhub: 'true'
+          login_ghcr: 'true'
+          dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+          ghcr_actor: ${{ github.actor }}
+          ghcr_token: ${{ github.token }}
+
+      - name: Check existing tags
+        id: check-existing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RESULT="$({ FORCE_BUILD="${{ inputs.force_build }}" GHCR_REPO="${{ inputs.ghcr_repo }}" VERSION="${{ matrix.version }}" bash .github/scripts/check-existing-tags.sh; } )"
+          echo "$RESULT"
+          SKIP_LINE="$(echo "$RESULT" | awk -F= '/^skip_build=/{print $0}' | tail -n1)"
+          if [[ -z "$SKIP_LINE" ]]; then
+            echo "check-existing-tags did not return skip_build output" >&2
+            exit 1
+          fi
+          echo "$SKIP_LINE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Dockerfile via DockerfileModifier.sh
+        if: steps.check-existing.outputs.skip_build != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Using base image: ${{ inputs.base_image_default }}"
+          mkdir -p build_data
+          echo "${{ inputs.base_image_default }}" > ./build_data/base-image
+          echo "${{ matrix.version }}" > ./build_data/version
+          touch ./build_data/build
+          bash ./DockerfileModifier.sh
+          test -f ./Dockerfile.context7-mcp
+
+      - name: Build and push image
+        if: steps.check-existing.outputs.skip_build != 'true'
+        env:
+          BUILDKIT_STEP_LOG_MAX_SIZE: ${{ inputs.buildkit_step_log_max_size }}
+          BUILDKIT_STEP_LOG_MAX_SPEED: ${{ inputs.buildkit_step_log_max_speed }}
+          BUILDKIT_PROGRESS: ${{ inputs.buildkit_progress }}
+          DOCKER_BUILDKIT_INLINE_CACHE: ${{ inputs.docker_buildkit_inline_cache }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.context7-mcp
+          push: true
+          platforms: ${{ inputs.default_platforms }}
+          tags: |
+            ${{ inputs.ghcr_repo }}:${{ matrix.image_tag }}
+            ${{ inputs.ghcr_repo }}:${{ matrix.version }}
+          cache-from: |
+            type=registry,ref=${{ inputs.ghcr_repo }}:buildcache-${{ matrix.version }}
+            type=registry,ref=${{ inputs.dockerhub_repo }}:buildcache-${{ matrix.version }}
+          cache-to: |
+            type=registry,ref=${{ inputs.ghcr_repo }}:buildcache-${{ matrix.version }},mode=max
+            type=registry,ref=${{ inputs.dockerhub_repo }}:buildcache-${{ matrix.version }},mode=max
+          outputs: type=registry,oci-mediatypes=true,${{ steps.profile.outputs.compression_params }},export-cache-concurrency=${{ inputs.export_cache_concurrency }},export-layers-concurrency=${{ inputs.export_layers_concurrency }}
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            CONTEXT7_VERSION=${{ matrix.version }}
+            BASE_IMAGE=${{ inputs.base_image_default }}
+          provenance: false
+          sbom: false
+
+      - name: Sync Docker Hub from GHCR (secondary mirror)
+        uses: ./.github/actions/registry-sync
+        with:
+          dockerhub_repo: ${{ inputs.dockerhub_repo }}
+          ghcr_repo: ${{ inputs.ghcr_repo }}
+          tags: ${{ matrix.image_tag }},${{ matrix.version }}

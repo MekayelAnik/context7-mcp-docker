@@ -10,7 +10,7 @@ on:
         options:
           - auto-check
           - build-versions
-          - promote-image
+          - promote-latest
         default: auto-check
       versions:
         description: Optional versions to build (comma-separated). Empty = auto from NPM.
@@ -75,7 +75,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate workflow YAML and shell scripts
+      - name: Validate workflow YAML
         shell: bash
         run: |
           set -euo pipefail
@@ -83,44 +83,24 @@ jobs:
           python3 - <<'PY'
           import yaml
           from pathlib import Path
-          p = Path('.github/workflows/monitor-npm-releases.yml')
-          yaml.safe_load(p.read_text(encoding='utf-8'))
+
+          workflow_dir = Path('.github/workflows')
+          for wf in sorted(workflow_dir.glob('*.yml')):
+              yaml.safe_load(wf.read_text(encoding='utf-8'))
           print('workflow_yaml_ok')
           PY
 
-          bash -n resources/entrypoint.sh
-          bash -n DockerfileModifier.sh
-          bash -n .github/scripts/check-existing-tags.sh
-          bash -n .github/scripts/registry-sync.sh
-          bash -n .github/scripts/test-registry-sync.sh
-          echo "script_syntax_ok"
-
-      - name: Validate API key rules
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          bash .github/scripts/test-api-key-validation.sh
-
-      - name: Validate runtime HTTPS/HTTP/cert behavior
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          bash .github/scripts/test-runtime-behavior.sh
-
-      - name: Validate registry sync behavior
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          bash .github/scripts/test-registry-sync.sh
+      - name: Run preflight shell tests
+        uses: ./.github/actions/preflight-shell-tests
 
   fetch-releases:
     name: Fetch and filter NPM releases
     runs-on: ubuntu-latest
     needs: [preflight]
     outputs:
+      normalized_action: ${{ steps.normalize.outputs.action }}
+      normalized_versions: ${{ steps.normalize.outputs.versions }}
+      normalized_force_build: ${{ steps.normalize.outputs.force_build }}
       versions_json: ${{ steps.releases.outputs.versions_json }}
       latest_version: ${{ steps.releases.outputs.latest_version }}
       date_tag: ${{ steps.releases.outputs.date_tag }}
@@ -130,201 +110,69 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Normalize dispatch inputs
+        id: normalize
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACTION_INPUT="${{ github.event.inputs.action || '' }}" \
+          CLIENT_ACTION="${{ github.event.client_payload.action || '' }}" \
+          VERSIONS_INPUT="${{ github.event.inputs.versions || '' }}" \
+          CLIENT_VERSIONS="${{ github.event.client_payload.versions || '' }}" \
+          FORCE_INPUT="${{ github.event.inputs.force_build || '' }}" \
+          CLIENT_FORCE="${{ github.event.client_payload.force_build || '' }}" \
+          bash .github/scripts/normalize-dispatch-inputs.sh
+
       - name: Collect stable versions
         id: releases
         shell: bash
         run: |
           set -euo pipefail
 
-          REQUESTED_ACTION="${{ github.event.inputs.action || github.event.client_payload.action || 'auto-check' }}"
-          MANUAL_VERSIONS_RAW="${{ github.event.inputs.versions || github.event.client_payload.versions || '' }}"
-
-          DATE_TAG="$(date +%d%m%Y)"
-          echo "date_tag=$DATE_TAG" >> "$GITHUB_OUTPUT"
-
-          if [[ -n "$MANUAL_VERSIONS_RAW" && "$REQUESTED_ACTION" == "build-versions" ]]; then
-            MANUAL_VERSIONS="$MANUAL_VERSIONS_RAW"
-            VERSIONS_NEWEST="$(echo "$MANUAL_VERSIONS" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d' | grep -Evi '(beta|canary)' || true)"
-
-            if [[ -z "$VERSIONS_NEWEST" ]]; then
-              echo "versions_json=[]" >> "$GITHUB_OUTPUT"
-              echo "latest_version=" >> "$GITHUB_OUTPUT"
-              echo "should_build=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            LATEST_VERSION="$(echo "$VERSIONS_NEWEST" | head -n1)"
-          else
-            curl -fsSL "${NPM_REGISTRY}/${NPM_PACKAGE}" -o npm-package.json
-
-            VERSIONS_NEWEST="$({
-              jq -r '.versions | keys[]' npm-package.json \
-                | grep -Evi '(beta|canary)' \
-                | sort -Vr \
-                | head -n "${MAX_VERSIONS}"
-            } || true)"
-
-            if [[ -z "$VERSIONS_NEWEST" ]]; then
-              echo "versions_json=[]" >> "$GITHUB_OUTPUT"
-              echo "latest_version=" >> "$GITHUB_OUTPUT"
-              echo "should_build=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            DIST_TAG_LATEST="$(jq -r '."dist-tags".latest // ""' npm-package.json)"
-            if [[ -n "$DIST_TAG_LATEST" ]] && echo "$VERSIONS_NEWEST" | grep -qx "$DIST_TAG_LATEST"; then
-              LATEST_VERSION="$DIST_TAG_LATEST"
-            else
-              LATEST_VERSION="$(echo "$VERSIONS_NEWEST" | head -n1)"
-            fi
-          fi
-
-          VERSIONS_OLDEST="$(echo "$VERSIONS_NEWEST" | sort -V)"
-
-          VERSIONS_JSON="$(echo "$VERSIONS_OLDEST" | jq -R -s -c --arg date "$DATE_TAG" --arg latest "$LATEST_VERSION" '
-            split("\n")
-            | map(select(length > 0))
-            | map({
-                version: .,
-                image_tag: (. + "-" + $date),
-                promote_latest: (. == $latest)
-              })
-          ')"
-
-          echo "versions_json=$VERSIONS_JSON" >> "$GITHUB_OUTPUT"
-          echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
-          echo "should_build=true" >> "$GITHUB_OUTPUT"
-
-          echo "Stable versions selected for build (oldest first):"
-          echo "$VERSIONS_OLDEST"
-          echo "Latest stable: $LATEST_VERSION"
+          REQUESTED_ACTION="${{ steps.normalize.outputs.action }}" \
+          MANUAL_VERSIONS_RAW="${{ steps.normalize.outputs.versions }}" \
+          NPM_PACKAGE="${NPM_PACKAGE}" \
+          NPM_REGISTRY="${NPM_REGISTRY}" \
+          MAX_VERSIONS="${MAX_VERSIONS}" \
+          bash .github/scripts/fetch-releases.sh
 
   build-versions:
-    name: Build ${{ matrix.version }}
-    runs-on: ubuntu-latest
+    name: Build selected versions
     needs: [fetch-releases]
-    if: needs.fetch-releases.outputs.should_build == 'true' && (github.event_name == 'repository_dispatch' || github.event.inputs.action != 'promote-image')
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        include: ${{ fromJson(needs.fetch-releases.outputs.versions_json) }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Resolve build profile
-        id: profile
-        uses: ./.github/actions/resolve-build-profile
-        with:
-          build_profile: ${{ github.event.inputs.build_profile || 'production' }}
-
-      - name: Setup build environment
-        uses: ./.github/actions/setup-build-env
-        with:
-          do_checkout: 'false'
-          setup_qemu: 'true'
-          setup_buildx: 'true'
-          login_dockerhub: 'true'
-          login_ghcr: 'true'
-          dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
-          ghcr_actor: ${{ github.actor }}
-          ghcr_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check existing tags
-        id: check-existing
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          FORCE_BUILD="${{ github.event.inputs.force_build || github.event.client_payload.force_build || 'false' }}"
-          RESULT="$({ FORCE_BUILD="$FORCE_BUILD" GHCR_REPO="${GHCR_REPO}" VERSION="${{ matrix.version }}" bash .github/scripts/check-existing-tags.sh; } )"
-          echo "$RESULT"
-          SKIP_LINE="$(echo "$RESULT" | awk -F= '/^skip_build=/{print $0}' | tail -n1)"
-          if [[ -z "$SKIP_LINE" ]]; then
-            echo "check-existing-tags did not return skip_build output" >&2
-            exit 1
-          fi
-          echo "$SKIP_LINE" >> "$GITHUB_OUTPUT"
-
-      - name: Generate Dockerfile via DockerfileModifier.sh
-        if: steps.check-existing.outputs.skip_build != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Using base image: ${BASE_IMAGE_DEFAULT}"
-          mkdir -p build_data
-          echo "${BASE_IMAGE_DEFAULT}" > ./build_data/base-image
-          echo "${{ matrix.version }}" > ./build_data/version
-          touch ./build_data/build
-          bash ./DockerfileModifier.sh
-          test -f ./Dockerfile.context7-mcp
-
-      - name: Build and push image
-        if: steps.check-existing.outputs.skip_build != 'true'
-        env:
-          BUILDKIT_STEP_LOG_MAX_SIZE: ${{ env.BUILDKIT_STEP_LOG_MAX_SIZE }}
-          BUILDKIT_STEP_LOG_MAX_SPEED: ${{ env.BUILDKIT_STEP_LOG_MAX_SPEED }}
-          BUILDKIT_PROGRESS: ${{ env.BUILDKIT_PROGRESS }}
-          DOCKER_BUILDKIT_INLINE_CACHE: ${{ env.DOCKER_BUILDKIT_INLINE_CACHE }}
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile.context7-mcp
-          push: true
-          platforms: ${{ env.DEFAULT_PLATFORMS }}
-          tags: |
-            ${{ env.GHCR_REPO }}:${{ matrix.image_tag }}
-            ${{ env.GHCR_REPO }}:${{ matrix.version }}
-          cache-from: |
-            type=registry,ref=${{ env.GHCR_REPO }}:buildcache-${{ matrix.version }}
-            type=registry,ref=${{ env.DOCKERHUB_REPO }}:buildcache-${{ matrix.version }}
-          cache-to: |
-            type=registry,ref=${{ env.GHCR_REPO }}:buildcache-${{ matrix.version }},mode=max
-            type=registry,ref=${{ env.DOCKERHUB_REPO }}:buildcache-${{ matrix.version }},mode=max
-          outputs: type=registry,oci-mediatypes=true,${{ steps.profile.outputs.compression_params }},export-cache-concurrency=${{ env.EXPORT_CACHE_CONCURRENCY }},export-layers-concurrency=${{ env.EXPORT_LAYERS_CONCURRENCY }}
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
-            CONTEXT7_VERSION=${{ matrix.version }}
-            BASE_IMAGE=${{ env.BASE_IMAGE_DEFAULT }}
-          provenance: false
-          sbom: false
-
-      - name: Sync Docker Hub from GHCR (secondary mirror)
-        uses: ./.github/actions/registry-sync
-        with:
-          dockerhub_repo: ${{ env.DOCKERHUB_REPO }}
-          ghcr_repo: ${{ env.GHCR_REPO }}
-          tags: ${{ matrix.image_tag }},${{ matrix.version }}
+    if: needs.fetch-releases.outputs.should_build == 'true' && needs.fetch-releases.outputs.normalized_action != 'promote-latest'
+    uses: ./.github/workflows/reusable-build-versions.yml
+    with:
+      versions_json: ${{ needs.fetch-releases.outputs.versions_json }}
+      build_profile: ${{ github.event.inputs.build_profile || 'production' }}
+      force_build: ${{ needs.fetch-releases.outputs.normalized_force_build }}
+      base_image_default: ${{ env.BASE_IMAGE_DEFAULT }}
+      ghcr_repo: ${{ env.GHCR_REPO }}
+      dockerhub_repo: ${{ env.DOCKERHUB_REPO }}
+      default_platforms: ${{ env.DEFAULT_PLATFORMS }}
+      export_cache_concurrency: ${{ env.EXPORT_CACHE_CONCURRENCY }}
+      export_layers_concurrency: ${{ env.EXPORT_LAYERS_CONCURRENCY }}
+      buildkit_step_log_max_size: ${{ env.BUILDKIT_STEP_LOG_MAX_SIZE }}
+      buildkit_step_log_max_speed: ${{ env.BUILDKIT_STEP_LOG_MAX_SPEED }}
+      buildkit_progress: ${{ env.BUILDKIT_PROGRESS }}
+      docker_buildkit_inline_cache: ${{ env.DOCKER_BUILDKIT_INLINE_CACHE }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   promote-latest:
     name: Promote latest tag
-    runs-on: ubuntu-latest
     needs: [fetch-releases, build-versions]
     if: |
       always() &&
       needs.fetch-releases.outputs.latest_version != '' &&
-      (needs.build-versions.result == 'success' || github.event.inputs.action == 'promote-image')
-    steps:
-      - name: Setup promotion environment
-        uses: ./.github/actions/setup-build-env
-        with:
-          do_checkout: 'true'
-          setup_qemu: 'false'
-          setup_buildx: 'true'
-          login_dockerhub: 'true'
-          login_ghcr: 'true'
-          dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
-          ghcr_actor: ${{ github.actor }}
-          ghcr_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Promote latest and verify parity
-        uses: ./.github/actions/promote-latest
-        with:
-          latest_version: ${{ needs.fetch-releases.outputs.latest_version }}
-          date_tag: ${{ needs.fetch-releases.outputs.date_tag }}
-          ghcr_repo: ${{ env.GHCR_REPO }}
-          dockerhub_repo: ${{ env.DOCKERHUB_REPO }}
+      (needs.build-versions.result == 'success' || needs.fetch-releases.outputs.normalized_action == 'promote-latest')
+    uses: ./.github/workflows/reusable-promote-latest.yml
+    with:
+      latest_version: ${{ needs.fetch-releases.outputs.latest_version }}
+      date_tag: ${{ needs.fetch-releases.outputs.date_tag }}
+      ghcr_repo: ${{ env.GHCR_REPO }}
+      dockerhub_repo: ${{ env.DOCKERHUB_REPO }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
