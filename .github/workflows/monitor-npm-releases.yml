@@ -146,16 +146,16 @@ jobs:
       versions_json: ${{ needs.fetch-releases.outputs.versions_json }}
       build_profile: ${{ github.event.inputs.build_profile || 'production' }}
       force_build: ${{ needs.fetch-releases.outputs.normalized_force_build }}
-      base_image_default: ${{ env.BASE_IMAGE_DEFAULT }}
-      ghcr_repo: ${{ env.GHCR_REPO }}
-      dockerhub_repo: ${{ env.DOCKERHUB_REPO }}
-      default_platforms: ${{ env.DEFAULT_PLATFORMS }}
-      export_cache_concurrency: ${{ env.EXPORT_CACHE_CONCURRENCY }}
-      export_layers_concurrency: ${{ env.EXPORT_LAYERS_CONCURRENCY }}
-      buildkit_step_log_max_size: ${{ env.BUILDKIT_STEP_LOG_MAX_SIZE }}
-      buildkit_step_log_max_speed: ${{ env.BUILDKIT_STEP_LOG_MAX_SPEED }}
-      buildkit_progress: ${{ env.BUILDKIT_PROGRESS }}
-      docker_buildkit_inline_cache: ${{ env.DOCKER_BUILDKIT_INLINE_CACHE }}
+      base_image_default: ${{ github.event.inputs.base_image || vars.BASE_IMAGE_DEFAULT || 'node:current-alpine' }}
+      ghcr_repo: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
+      dockerhub_repo: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
+      default_platforms: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64' }}
+      export_cache_concurrency: '4'
+      export_layers_concurrency: '4'
+      buildkit_step_log_max_size: '50000000'
+      buildkit_step_log_max_speed: '100000000'
+      buildkit_progress: 'plain'
+      docker_buildkit_inline_cache: '1'
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -171,8 +171,8 @@ jobs:
     with:
       latest_version: ${{ needs.fetch-releases.outputs.latest_version }}
       date_tag: ${{ needs.fetch-releases.outputs.date_tag }}
-      ghcr_repo: ${{ env.GHCR_REPO }}
-      dockerhub_repo: ${{ env.DOCKERHUB_REPO }}
+      ghcr_repo: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
+      dockerhub_repo: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
