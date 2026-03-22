@@ -70,6 +70,21 @@ runs:
           exit 1
         fi
 
+        GHCR_VERSION_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:${LATEST_VERSION}" | awk '/^Digest:/{print $2; exit}')"
+        GHCR_LATEST_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:latest" | awk '/^Digest:/{print $2; exit}')"
+
+        if [[ -z "$GHCR_VERSION_DIGEST" || -z "$GHCR_LATEST_DIGEST" ]]; then
+          echo "Digest resolution failed during latest verification" >&2
+          exit 1
+        fi
+
+        if [[ "$GHCR_VERSION_DIGEST" != "$GHCR_LATEST_DIGEST" ]]; then
+          echo "GHCR latest digest does not match latest version digest (${LATEST_VERSION})" >&2
+          echo "Version digest: $GHCR_VERSION_DIGEST" >&2
+          echo "Latest digest:  $GHCR_LATEST_DIGEST" >&2
+          exit 1
+        fi
+
         GHCR_VERSION_PLATFORMS_STR="$(printf '%s\n' "${GHCR_VERSION_PLATFORMS[@]}")"
         GHCR_LATEST_PLATFORMS_STR="$(printf '%s\n' "${GHCR_LATEST_PLATFORMS[@]}")"
         DH_LATEST_PLATFORMS_STR="$(printf '%s\n' "${DH_LATEST_PLATFORMS[@]}")"
@@ -92,4 +107,70 @@ runs:
           exit 1
         fi
 
+        GHCR_LATEST_RAW="$(docker buildx imagetools inspect --raw "${GHCR_REPO}:latest")"
+        DH_LATEST_RAW="$(docker buildx imagetools inspect --raw "${DOCKERHUB_REPO}:latest")"
+
+        GHCR_IS_INDEX="$(echo "$GHCR_LATEST_RAW" | jq -r 'has("manifests")')"
+        DH_IS_INDEX="$(echo "$DH_LATEST_RAW" | jq -r 'has("manifests")')"
+
+        if [[ "$GHCR_IS_INDEX" == "true" || "$DH_IS_INDEX" == "true" ]]; then
+          if [[ "$GHCR_IS_INDEX" != "$DH_IS_INDEX" ]]; then
+            echo "Registry media type mismatch: one latest tag is multi-arch index and the other is not" >&2
+            exit 1
+          fi
+
+          GHCR_CHILD_MAP="$(
+            echo "$GHCR_LATEST_RAW" \
+              | jq -r '.manifests[]
+                  | select(.platform.os != null and .platform.architecture != null)
+                  | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant then "/" + .platform.variant else "" end)=\(.digest)"' \
+              | sort -u
+          )"
+
+          DH_CHILD_MAP="$(
+            echo "$DH_LATEST_RAW" \
+              | jq -r '.manifests[]
+                  | select(.platform.os != null and .platform.architecture != null)
+                  | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant then "/" + .platform.variant else "" end)=\(.digest)"' \
+              | sort -u
+          )"
+
+          if [[ -z "$GHCR_CHILD_MAP" || -z "$DH_CHILD_MAP" ]]; then
+            echo "Child manifest digest extraction failed for multi-arch comparison" >&2
+            exit 1
+          fi
+
+          if [[ "$GHCR_CHILD_MAP" != "$DH_CHILD_MAP" ]]; then
+            echo "Docker Hub latest child manifest digests do not match GHCR latest" >&2
+            echo "GHCR child map:" >&2
+            echo "$GHCR_CHILD_MAP" >&2
+            echo "Docker Hub child map:" >&2
+            echo "$DH_CHILD_MAP" >&2
+            exit 1
+          fi
+        else
+          GHCR_CONFIG_DIGEST="$(echo "$GHCR_LATEST_RAW" | jq -r '.config.digest // ""')"
+          DH_CONFIG_DIGEST="$(echo "$DH_LATEST_RAW" | jq -r '.config.digest // ""')"
+
+          GHCR_LAYER_DIGESTS="$(echo "$GHCR_LATEST_RAW" | jq -r '.layers[]?.digest // empty' | sort -u)"
+          DH_LAYER_DIGESTS="$(echo "$DH_LATEST_RAW" | jq -r '.layers[]?.digest // empty' | sort -u)"
+
+          if [[ -z "$GHCR_CONFIG_DIGEST" || -z "$DH_CONFIG_DIGEST" ]]; then
+            echo "Config digest extraction failed for single-arch comparison" >&2
+            exit 1
+          fi
+
+          if [[ "$GHCR_CONFIG_DIGEST" != "$DH_CONFIG_DIGEST" || "$GHCR_LAYER_DIGESTS" != "$DH_LAYER_DIGESTS" ]]; then
+            echo "Docker Hub latest single-arch content digests do not match GHCR latest" >&2
+            echo "GHCR config digest: $GHCR_CONFIG_DIGEST" >&2
+            echo "Docker Hub config digest: $DH_CONFIG_DIGEST" >&2
+            echo "GHCR layer digests:" >&2
+            echo "$GHCR_LAYER_DIGESTS" >&2
+            echo "Docker Hub layer digests:" >&2
+            echo "$DH_LAYER_DIGESTS" >&2
+            exit 1
+          fi
+        fi
+
         echo "Latest tag verification passed for version ${LATEST_VERSION}"
+        echo "GHCR digest: ${GHCR_LATEST_DIGEST}"
