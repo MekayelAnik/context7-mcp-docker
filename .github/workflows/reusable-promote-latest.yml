@@ -37,6 +37,9 @@ jobs:
     runs-on: ubuntu-latest
     if: inputs.latest_version != ''
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup promotion environment
         uses: ./.github/actions/setup-build-env
         with:
