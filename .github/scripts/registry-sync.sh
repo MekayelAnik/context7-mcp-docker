@@ -37,6 +37,11 @@ run_with_retry() {
         echo "Last stderr output:" >&2
         cat "$err_file" >&2
     fi
+        if grep -qiE '429|toomanyrequests|rate limit' "$err_file"; then
+            echo "Rate limit detected for ${description}" >&2
+            rm -f "$err_file"
+            return 2
+        fi
     rm -f "$err_file"
     return 1
 }
@@ -70,6 +75,11 @@ run_with_retry_output() {
         echo "Last stderr output:" >&2
         cat "$err_file" >&2
     fi
+        if grep -qiE '429|toomanyrequests|rate limit' "$err_file"; then
+            echo "Rate limit detected for ${description}" >&2
+            rm -f "$err_file"
+            return 2
+        fi
     rm -f "$err_file"
     return 1
 }
@@ -118,14 +128,27 @@ sync_tag() {
         run_with_retry "sync ${tag} ghcr->dockerhub" docker buildx imagetools create -t "$dh_ref" "$ghcr_ref" >/dev/null
     else
         local ghcr_platforms dh_platforms
-        ghcr_platforms="$(get_platform_set "$ghcr_ref")" || {
+        set +e
+        ghcr_platforms="$(get_platform_set "$ghcr_ref")"
+        ghcr_rc=$?
+        set -e
+        if [[ "$ghcr_rc" -ne 0 ]]; then
             echo "::error::Failed to inspect GHCR platforms for $tag" >&2
             return 1
-        }
-        dh_platforms="$(get_platform_set "$dh_ref")" || {
+        fi
+
+        set +e
+        dh_platforms="$(get_platform_set "$dh_ref")"
+        dh_rc=$?
+        set -e
+        if [[ "$dh_rc" -eq 2 ]]; then
+            echo "::warning::Skipping tag $tag sync parity check due to Docker Hub rate limiting" >&2
+            return 0
+        fi
+        if [[ "$dh_rc" -ne 0 ]]; then
             echo "::error::Failed to inspect Docker Hub platforms for $tag" >&2
             return 1
-        }
+        fi
 
         if [[ -n "$ghcr_platforms" && -n "$dh_platforms" && "$ghcr_platforms" == "$dh_platforms" ]]; then
             echo "Tag $tag: platform manifests already match across registries - skipping"
@@ -137,14 +160,27 @@ sync_tag() {
     fi
 
     local ghcr_platforms_final dh_platforms_final
-    ghcr_platforms_final="$(get_platform_set "$ghcr_ref")" || {
+    set +e
+    ghcr_platforms_final="$(get_platform_set "$ghcr_ref")"
+    ghcr_final_rc=$?
+    set -e
+    if [[ "$ghcr_final_rc" -ne 0 ]]; then
         echo "::error::Post-sync inspect failed for GHCR tag $tag" >&2
         return 1
-    }
-    dh_platforms_final="$(get_platform_set "$dh_ref")" || {
+    fi
+
+    set +e
+    dh_platforms_final="$(get_platform_set "$dh_ref")"
+    dh_final_rc=$?
+    set -e
+    if [[ "$dh_final_rc" -eq 2 ]]; then
+        echo "::warning::Skipping post-sync verification for tag $tag due to Docker Hub rate limiting" >&2
+        return 0
+    fi
+    if [[ "$dh_final_rc" -ne 0 ]]; then
         echo "::error::Post-sync inspect failed for Docker Hub tag $tag" >&2
         return 1
-    }
+    fi
 
     if [[ -z "$ghcr_platforms_final" || -z "$dh_platforms_final" ]]; then
         echo "::error::Sync verification failed for $tag (missing platform metadata)" >&2
