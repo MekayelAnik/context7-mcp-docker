@@ -10,9 +10,80 @@ if [[ -z "$DOCKERHUB_REPO" || -z "$GHCR_REPO" || -z "$TAGS" ]]; then
     exit 1
 fi
 
+run_with_retry() {
+    local description="$1"
+    shift
+    local attempts=5
+    local delay=2
+    local attempt
+    local err_file
+    err_file="$(mktemp)"
+
+    for attempt in $(seq 1 "$attempts"); do
+        if "$@" 2>"$err_file"; then
+            rm -f "$err_file"
+            return 0
+        fi
+
+        if [[ "$attempt" -lt "$attempts" ]]; then
+            echo "Retry ${attempt}/${attempts} for ${description} failed. Sleeping ${delay}s..." >&2
+            sleep "$delay"
+            delay=$((delay * 2))
+        fi
+    done
+
+    echo "${description} failed after ${attempts} attempts" >&2
+    if [[ -s "$err_file" ]]; then
+        echo "Last stderr output:" >&2
+        cat "$err_file" >&2
+    fi
+    rm -f "$err_file"
+    return 1
+}
+
+run_with_retry_output() {
+    local description="$1"
+    shift
+    local attempts=5
+    local delay=2
+    local attempt
+    local err_file
+    local out
+    err_file="$(mktemp)"
+
+    for attempt in $(seq 1 "$attempts"); do
+        if out="$("$@" 2>"$err_file")"; then
+            rm -f "$err_file"
+            printf '%s' "$out"
+            return 0
+        fi
+
+        if [[ "$attempt" -lt "$attempts" ]]; then
+            echo "Retry ${attempt}/${attempts} for ${description} failed. Sleeping ${delay}s..." >&2
+            sleep "$delay"
+            delay=$((delay * 2))
+        fi
+    done
+
+    echo "${description} failed after ${attempts} attempts" >&2
+    if [[ -s "$err_file" ]]; then
+        echo "Last stderr output:" >&2
+        cat "$err_file" >&2
+    fi
+    rm -f "$err_file"
+    return 1
+}
+
+inspect_with_retry() {
+    local ref="$1"
+    run_with_retry_output "inspect ${ref}" docker buildx imagetools inspect "$ref"
+}
+
 get_platform_set() {
     local ref="$1"
-    docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/Platform:/{print $2}' | sort -u | tr '\n' ',' | sed 's/,$//'
+    local inspect_text
+    inspect_text="$(inspect_with_retry "$ref")" || return 1
+    echo "$inspect_text" | awk '/Platform:/{print $2}' | sort -u | tr '\n' ',' | sed 's/,$//'
 }
 
 tag_exists() {
@@ -38,17 +109,23 @@ sync_tag() {
 
     if [[ "$ghcr_exists" == "no" && "$dh_exists" == "yes" ]]; then
         echo "Syncing $tag: Docker Hub -> GHCR (backfill mode)"
-        docker buildx imagetools create -t "$ghcr_ref" "$dh_ref" >/dev/null
+        run_with_retry "sync ${tag} dockerhub->ghcr" docker buildx imagetools create -t "$ghcr_ref" "$dh_ref" >/dev/null
     elif [[ "$ghcr_exists" == "no" && "$dh_exists" == "no" ]]; then
         echo "Tag $tag: not found in either registry - skipping"
         return 0
     elif [[ "$ghcr_exists" == "yes" && "$dh_exists" == "no" ]]; then
         echo "Syncing $tag: GHCR -> Docker Hub"
-        docker buildx imagetools create -t "$dh_ref" "$ghcr_ref" >/dev/null
+        run_with_retry "sync ${tag} ghcr->dockerhub" docker buildx imagetools create -t "$dh_ref" "$ghcr_ref" >/dev/null
     else
         local ghcr_platforms dh_platforms
-        ghcr_platforms="$(get_platform_set "$ghcr_ref")"
-        dh_platforms="$(get_platform_set "$dh_ref")"
+        ghcr_platforms="$(get_platform_set "$ghcr_ref")" || {
+            echo "::error::Failed to inspect GHCR platforms for $tag" >&2
+            return 1
+        }
+        dh_platforms="$(get_platform_set "$dh_ref")" || {
+            echo "::error::Failed to inspect Docker Hub platforms for $tag" >&2
+            return 1
+        }
 
         if [[ -n "$ghcr_platforms" && -n "$dh_platforms" && "$ghcr_platforms" == "$dh_platforms" ]]; then
             echo "Tag $tag: platform manifests already match across registries - skipping"
@@ -56,12 +133,18 @@ sync_tag() {
         fi
 
         echo "Syncing $tag: mismatch detected, GHCR -> Docker Hub"
-        docker buildx imagetools create -t "$dh_ref" "$ghcr_ref" >/dev/null
+        run_with_retry "sync ${tag} mismatch ghcr->dockerhub" docker buildx imagetools create -t "$dh_ref" "$ghcr_ref" >/dev/null
     fi
 
     local ghcr_platforms_final dh_platforms_final
-    ghcr_platforms_final="$(get_platform_set "$ghcr_ref")"
-    dh_platforms_final="$(get_platform_set "$dh_ref")"
+    ghcr_platforms_final="$(get_platform_set "$ghcr_ref")" || {
+        echo "::error::Post-sync inspect failed for GHCR tag $tag" >&2
+        return 1
+    }
+    dh_platforms_final="$(get_platform_set "$dh_ref")" || {
+        echo "::error::Post-sync inspect failed for Docker Hub tag $tag" >&2
+        return 1
+    }
 
     if [[ -z "$ghcr_platforms_final" || -z "$dh_platforms_final" ]]; then
         echo "::error::Sync verification failed for $tag (missing platform metadata)" >&2
@@ -87,6 +170,8 @@ for tag in "${TAG_ARRAY[@]}"; do
     if [[ -z "$clean_tag" ]]; then
         continue
     fi
+
+    echo "Processing tag: $clean_tag"
 
     if [[ -n "${SEEN_TAGS[$clean_tag]:-}" ]]; then
         echo "Tag $clean_tag: duplicate in input list - skipping duplicate"
