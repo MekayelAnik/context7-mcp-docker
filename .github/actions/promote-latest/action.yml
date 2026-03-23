@@ -131,6 +131,33 @@ runs:
           run_with_retry_output "inspect raw ${ref}" docker buildx imagetools inspect --raw "$ref"
         }
 
+        inspect_raw_optional() {
+          local ref="$1"
+          local label="$2"
+          local err_file
+          local out
+          err_file="$(mktemp)"
+
+          if out="$(docker buildx imagetools inspect --raw "$ref" 2>"$err_file")"; then
+            rm -f "$err_file"
+            printf '%s' "$out"
+            return 0
+          fi
+
+          if grep -qiE '429|toomanyrequests|rate limit' "$err_file"; then
+            echo "::warning::Skipping deep raw verification for ${label} due to registry rate limiting on ${ref}" >&2
+            rm -f "$err_file"
+            return 2
+          fi
+
+          echo "Failed optional raw inspect for ${label} (${ref})" >&2
+          if [[ -s "$err_file" ]]; then
+            cat "$err_file" >&2
+          fi
+          rm -f "$err_file"
+          return 1
+        }
+
         LATEST_VERSION="${{ inputs.latest_version }}"
         GHCR_REPO="${{ inputs.ghcr_repo }}"
         DOCKERHUB_REPO="${{ inputs.dockerhub_repo }}"
@@ -186,7 +213,22 @@ runs:
         fi
 
         GHCR_LATEST_RAW="$(inspect_raw "${GHCR_REPO}:latest")"
-        DH_LATEST_RAW="$(inspect_raw "${DOCKERHUB_REPO}:latest")"
+
+        DH_LATEST_RAW=""
+        set +e
+        DH_LATEST_RAW="$(inspect_raw_optional "${DOCKERHUB_REPO}:latest" "dockerhub latest")"
+        rc=$?
+        set -e
+        if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then
+          exit "$rc"
+        fi
+
+        if [[ -z "$DH_LATEST_RAW" ]]; then
+          echo "::warning::Deep raw latest verification skipped for Docker Hub due to rate limit; digest/platform parity checks already passed" >&2
+          echo "Latest tag verification passed for version ${LATEST_VERSION} (raw deep check skipped)"
+          echo "GHCR digest: ${GHCR_LATEST_DIGEST}"
+          exit 0
+        fi
 
         GHCR_IS_INDEX="$(echo "$GHCR_LATEST_RAW" | jq -r 'has("manifests")')"
         DH_IS_INDEX="$(echo "$DH_LATEST_RAW" | jq -r 'has("manifests")')"
