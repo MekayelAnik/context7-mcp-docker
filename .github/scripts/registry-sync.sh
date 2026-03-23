@@ -92,7 +92,17 @@ inspect_with_retry() {
 get_platform_set() {
     local ref="$1"
     local inspect_text
-    inspect_text="$(inspect_with_retry "$ref")" || return 1
+    local rc
+
+    set +e
+    inspect_text="$(inspect_with_retry "$ref")"
+    rc=$?
+    set -e
+
+    if [[ "$rc" -ne 0 ]]; then
+        return "$rc"
+    fi
+
     echo "$inspect_text" | awk '/Platform:/{print $2}' | sort -u | tr '\n' ',' | sed 's/,$//'
 }
 
@@ -119,13 +129,35 @@ sync_tag() {
 
     if [[ "$ghcr_exists" == "no" && "$dh_exists" == "yes" ]]; then
         echo "Syncing $tag: Docker Hub -> GHCR (backfill mode)"
+        set +e
         run_with_retry "sync ${tag} dockerhub->ghcr" docker buildx imagetools create -t "$ghcr_ref" "$dh_ref" >/dev/null
+        create_rc=$?
+        set -e
+
+        if [[ "$create_rc" -eq 2 ]]; then
+            echo "::warning::Skipping tag $tag backfill due to Docker Hub rate limiting" >&2
+            return 0
+        fi
+        if [[ "$create_rc" -ne 0 ]]; then
+            return "$create_rc"
+        fi
     elif [[ "$ghcr_exists" == "no" && "$dh_exists" == "no" ]]; then
         echo "Tag $tag: not found in either registry - skipping"
         return 0
     elif [[ "$ghcr_exists" == "yes" && "$dh_exists" == "no" ]]; then
         echo "Syncing $tag: GHCR -> Docker Hub"
+        set +e
         run_with_retry "sync ${tag} ghcr->dockerhub" docker buildx imagetools create -t "$dh_ref" "$ghcr_ref" >/dev/null
+        create_rc=$?
+        set -e
+
+        if [[ "$create_rc" -eq 2 ]]; then
+            echo "::warning::Skipping tag $tag mirror push due to Docker Hub rate limiting" >&2
+            return 0
+        fi
+        if [[ "$create_rc" -ne 0 ]]; then
+            return "$create_rc"
+        fi
     else
         local ghcr_platforms dh_platforms
         set +e
@@ -156,7 +188,18 @@ sync_tag() {
         fi
 
         echo "Syncing $tag: mismatch detected, GHCR -> Docker Hub"
+        set +e
         run_with_retry "sync ${tag} mismatch ghcr->dockerhub" docker buildx imagetools create -t "$dh_ref" "$ghcr_ref" >/dev/null
+        create_rc=$?
+        set -e
+
+        if [[ "$create_rc" -eq 2 ]]; then
+            echo "::warning::Skipping tag $tag mismatch sync due to Docker Hub rate limiting" >&2
+            return 0
+        fi
+        if [[ "$create_rc" -ne 0 ]]; then
+            return "$create_rc"
+        fi
     fi
 
     local ghcr_platforms_final dh_platforms_final
