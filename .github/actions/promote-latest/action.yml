@@ -78,8 +78,17 @@ runs:
           exit 1
         fi
 
+        # GHCR promotion — hard requirement (primary registry)
         run_with_retry "promote ${GHCR_REPO}:latest" docker buildx imagetools create -t "${GHCR_REPO}:latest" "${GHCR_REPO}:${SOURCE_TAG_GHCR}" >/dev/null
+
+        # Docker Hub promotion — best effort (secondary mirror)
+        set +e
         run_with_retry "promote ${DOCKERHUB_REPO}:latest" docker buildx imagetools create -t "${DOCKERHUB_REPO}:latest" "${GHCR_REPO}:${SOURCE_TAG_GHCR}" >/dev/null
+        dh_promote_rc=$?
+        set -e
+        if [[ "$dh_promote_rc" -ne 0 ]]; then
+          echo "::warning::Docker Hub latest promotion failed (rc=${dh_promote_rc}); GHCR promotion succeeded. Docker Hub will be retried on next run."
+        fi
 
         echo "source_tag_ghcr=$SOURCE_TAG_GHCR" >> "$GITHUB_OUTPUT"
 
@@ -131,26 +140,35 @@ runs:
           run_with_retry_output "inspect raw ${ref}" docker buildx imagetools inspect --raw "$ref"
         }
 
-        inspect_raw_optional() {
+        # 429-tolerant inspect for Docker Hub (secondary mirror).
+        # Returns: 0 = success (stdout has output), 1 = hard error, 2 = rate limited (stdout empty).
+        inspect_optional() {
           local ref="$1"
           local label="$2"
+          local raw_flag="${3:-}"
           local err_file
           local out
           err_file="$(mktemp)"
 
-          if out="$(docker buildx imagetools inspect --raw "$ref" 2>"$err_file")"; then
+          local cmd=(docker buildx imagetools inspect)
+          if [[ "$raw_flag" == "--raw" ]]; then
+            cmd+=(--raw)
+          fi
+          cmd+=("$ref")
+
+          if out="$("${cmd[@]}" 2>"$err_file")"; then
             rm -f "$err_file"
             printf '%s' "$out"
             return 0
           fi
 
           if grep -qiE '429|toomanyrequests|rate limit' "$err_file"; then
-            echo "::warning::Skipping deep raw verification for ${label} due to registry rate limiting on ${ref}" >&2
+            echo "::warning::Skipping ${label} verification due to registry rate limiting on ${ref}" >&2
             rm -f "$err_file"
             return 2
           fi
 
-          echo "Failed optional raw inspect for ${label} (${ref})" >&2
+          echo "Failed optional inspect for ${label} (${ref})" >&2
           if [[ -s "$err_file" ]]; then
             cat "$err_file" >&2
           fi
@@ -162,16 +180,27 @@ runs:
         GHCR_REPO="${{ inputs.ghcr_repo }}"
         DOCKERHUB_REPO="${{ inputs.dockerhub_repo }}"
 
+        # ── GHCR inspects (hard requirement) ──
         GHCR_VERSION_INSPECT="$(inspect_text "${GHCR_REPO}:${LATEST_VERSION}")"
         GHCR_LATEST_INSPECT="$(inspect_text "${GHCR_REPO}:latest")"
-        DH_LATEST_INSPECT="$(inspect_text "${DOCKERHUB_REPO}:latest")"
 
+        # ── Docker Hub inspect (best effort) ──
+        DH_LATEST_INSPECT=""
+        set +e
+        DH_LATEST_INSPECT="$(inspect_optional "${DOCKERHUB_REPO}:latest" "dockerhub latest text")"
+        dh_text_rc=$?
+        set -e
+        if [[ "$dh_text_rc" -ne 0 && "$dh_text_rc" -ne 2 ]]; then
+          echo "::warning::Docker Hub latest text inspect failed with non-rate-limit error; skipping DH cross-verification"
+          DH_LATEST_INSPECT=""
+        fi
+
+        # ── GHCR self-consistency checks (hard gates) ──
         mapfile -t GHCR_VERSION_PLATFORMS < <(echo "$GHCR_VERSION_INSPECT" | awk '/Platform:/{print $2}' | sort -u)
         mapfile -t GHCR_LATEST_PLATFORMS < <(echo "$GHCR_LATEST_INSPECT" | awk '/Platform:/{print $2}' | sort -u)
-        mapfile -t DH_LATEST_PLATFORMS < <(echo "$DH_LATEST_INSPECT" | awk '/Platform:/{print $2}' | sort -u)
 
-        if [[ "${#GHCR_VERSION_PLATFORMS[@]}" -eq 0 || "${#GHCR_LATEST_PLATFORMS[@]}" -eq 0 || "${#DH_LATEST_PLATFORMS[@]}" -eq 0 ]]; then
-          echo "Platform list resolution failed during latest verification" >&2
+        if [[ "${#GHCR_VERSION_PLATFORMS[@]}" -eq 0 || "${#GHCR_LATEST_PLATFORMS[@]}" -eq 0 ]]; then
+          echo "GHCR platform list resolution failed during latest verification" >&2
           exit 1
         fi
 
@@ -179,7 +208,7 @@ runs:
         GHCR_LATEST_DIGEST="$(echo "$GHCR_LATEST_INSPECT" | awk '/^Digest:/{print $2; exit}')"
 
         if [[ -z "$GHCR_VERSION_DIGEST" || -z "$GHCR_LATEST_DIGEST" ]]; then
-          echo "Digest resolution failed during latest verification" >&2
+          echo "GHCR digest resolution failed during latest verification" >&2
           exit 1
         fi
 
@@ -192,7 +221,6 @@ runs:
 
         GHCR_VERSION_PLATFORMS_STR="$(printf '%s\n' "${GHCR_VERSION_PLATFORMS[@]}")"
         GHCR_LATEST_PLATFORMS_STR="$(printf '%s\n' "${GHCR_LATEST_PLATFORMS[@]}")"
-        DH_LATEST_PLATFORMS_STR="$(printf '%s\n' "${DH_LATEST_PLATFORMS[@]}")"
 
         if [[ "$GHCR_VERSION_PLATFORMS_STR" != "$GHCR_LATEST_PLATFORMS_STR" ]]; then
           echo "GHCR latest platforms do not match latest version tag (${LATEST_VERSION})" >&2
@@ -203,93 +231,101 @@ runs:
           exit 1
         fi
 
-        if [[ "$GHCR_LATEST_PLATFORMS_STR" != "$DH_LATEST_PLATFORMS_STR" ]]; then
-          echo "Docker Hub latest platforms do not match GHCR latest platforms" >&2
-          echo "GHCR latest platforms:" >&2
-          echo "$GHCR_LATEST_PLATFORMS_STR" >&2
-          echo "Docker Hub latest platforms:" >&2
-          echo "$DH_LATEST_PLATFORMS_STR" >&2
-          exit 1
-        fi
+        # ── Docker Hub cross-verification (best effort) ──
+        DH_TEXT_VERIFIED="false"
+        if [[ -n "$DH_LATEST_INSPECT" ]]; then
+          mapfile -t DH_LATEST_PLATFORMS < <(echo "$DH_LATEST_INSPECT" | awk '/Platform:/{print $2}' | sort -u)
 
-        GHCR_LATEST_RAW="$(inspect_raw "${GHCR_REPO}:latest")"
-
-        DH_LATEST_RAW=""
-        set +e
-        DH_LATEST_RAW="$(inspect_raw_optional "${DOCKERHUB_REPO}:latest" "dockerhub latest")"
-        rc=$?
-        set -e
-        if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then
-          exit "$rc"
-        fi
-
-        if [[ -z "$DH_LATEST_RAW" ]]; then
-          echo "::warning::Deep raw latest verification skipped for Docker Hub due to rate limit; digest/platform parity checks already passed" >&2
-          echo "Latest tag verification passed for version ${LATEST_VERSION} (raw deep check skipped)"
-          echo "GHCR digest: ${GHCR_LATEST_DIGEST}"
-          exit 0
-        fi
-
-        GHCR_IS_INDEX="$(echo "$GHCR_LATEST_RAW" | jq -r 'has("manifests")')"
-        DH_IS_INDEX="$(echo "$DH_LATEST_RAW" | jq -r 'has("manifests")')"
-
-        if [[ "$GHCR_IS_INDEX" == "true" || "$DH_IS_INDEX" == "true" ]]; then
-          if [[ "$GHCR_IS_INDEX" != "$DH_IS_INDEX" ]]; then
-            echo "Registry media type mismatch: one latest tag is multi-arch index and the other is not" >&2
-            exit 1
-          fi
-
-          GHCR_CHILD_MAP="$(
-            echo "$GHCR_LATEST_RAW" \
-              | jq -r '.manifests[]
-                  | select(.platform.os != null and .platform.architecture != null)
-                  | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant then "/" + .platform.variant else "" end)=\(.digest)"' \
-              | sort -u
-          )"
-
-          DH_CHILD_MAP="$(
-            echo "$DH_LATEST_RAW" \
-              | jq -r '.manifests[]
-                  | select(.platform.os != null and .platform.architecture != null)
-                  | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant then "/" + .platform.variant else "" end)=\(.digest)"' \
-              | sort -u
-          )"
-
-          if [[ -z "$GHCR_CHILD_MAP" || -z "$DH_CHILD_MAP" ]]; then
-            echo "Child manifest digest extraction failed for multi-arch comparison" >&2
-            exit 1
-          fi
-
-          if [[ "$GHCR_CHILD_MAP" != "$DH_CHILD_MAP" ]]; then
-            echo "Docker Hub latest child manifest digests do not match GHCR latest" >&2
-            echo "GHCR child map:" >&2
-            echo "$GHCR_CHILD_MAP" >&2
-            echo "Docker Hub child map:" >&2
-            echo "$DH_CHILD_MAP" >&2
-            exit 1
+          if [[ "${#DH_LATEST_PLATFORMS[@]}" -eq 0 ]]; then
+            echo "::warning::Docker Hub platform list empty; skipping DH cross-verification"
+          else
+            DH_LATEST_PLATFORMS_STR="$(printf '%s\n' "${DH_LATEST_PLATFORMS[@]}")"
+            if [[ "$GHCR_LATEST_PLATFORMS_STR" != "$DH_LATEST_PLATFORMS_STR" ]]; then
+              echo "::warning::Docker Hub latest platforms do not match GHCR latest platforms (DH is secondary mirror)"
+              echo "GHCR latest platforms:" >&2
+              echo "$GHCR_LATEST_PLATFORMS_STR" >&2
+              echo "Docker Hub latest platforms:" >&2
+              echo "$DH_LATEST_PLATFORMS_STR" >&2
+            else
+              DH_TEXT_VERIFIED="true"
+            fi
           fi
         else
-          GHCR_CONFIG_DIGEST="$(echo "$GHCR_LATEST_RAW" | jq -r '.config.digest // ""')"
-          DH_CONFIG_DIGEST="$(echo "$DH_LATEST_RAW" | jq -r '.config.digest // ""')"
+          echo "::warning::Docker Hub text inspect unavailable; DH cross-verification skipped"
+        fi
 
-          GHCR_LAYER_DIGESTS="$(echo "$GHCR_LATEST_RAW" | jq -r '.layers[]?.digest // empty' | sort -u)"
-          DH_LAYER_DIGESTS="$(echo "$DH_LATEST_RAW" | jq -r '.layers[]?.digest // empty' | sort -u)"
+        # ── Deep raw verification ──
+        GHCR_LATEST_RAW="$(inspect_raw "${GHCR_REPO}:latest")"
 
-          if [[ -z "$GHCR_CONFIG_DIGEST" || -z "$DH_CONFIG_DIGEST" ]]; then
-            echo "Config digest extraction failed for single-arch comparison" >&2
-            exit 1
+        if [[ "$DH_TEXT_VERIFIED" == "true" ]]; then
+          DH_LATEST_RAW=""
+          set +e
+          DH_LATEST_RAW="$(inspect_optional "${DOCKERHUB_REPO}:latest" "dockerhub latest raw" "--raw")"
+          dh_raw_rc=$?
+          set -e
+          if [[ "$dh_raw_rc" -ne 0 && "$dh_raw_rc" -ne 2 ]]; then
+            echo "::warning::Docker Hub raw inspect failed with non-rate-limit error; skipping deep verification"
+            DH_LATEST_RAW=""
           fi
 
-          if [[ "$GHCR_CONFIG_DIGEST" != "$DH_CONFIG_DIGEST" || "$GHCR_LAYER_DIGESTS" != "$DH_LAYER_DIGESTS" ]]; then
-            echo "Docker Hub latest single-arch content digests do not match GHCR latest" >&2
-            echo "GHCR config digest: $GHCR_CONFIG_DIGEST" >&2
-            echo "Docker Hub config digest: $DH_CONFIG_DIGEST" >&2
-            echo "GHCR layer digests:" >&2
-            echo "$GHCR_LAYER_DIGESTS" >&2
-            echo "Docker Hub layer digests:" >&2
-            echo "$DH_LAYER_DIGESTS" >&2
-            exit 1
+          if [[ -n "$DH_LATEST_RAW" ]]; then
+            GHCR_IS_INDEX="$(echo "$GHCR_LATEST_RAW" | jq -r 'has("manifests")')"
+            DH_IS_INDEX="$(echo "$DH_LATEST_RAW" | jq -r 'has("manifests")')"
+
+            if [[ "$GHCR_IS_INDEX" == "true" || "$DH_IS_INDEX" == "true" ]]; then
+              if [[ "$GHCR_IS_INDEX" != "$DH_IS_INDEX" ]]; then
+                echo "::warning::Registry media type mismatch: one latest tag is multi-arch index and the other is not (DH is secondary mirror)"
+              else
+                GHCR_CHILD_MAP="$(
+                  echo "$GHCR_LATEST_RAW" \
+                    | jq -r '.manifests[]
+                        | select(.platform.os != null and .platform.architecture != null)
+                        | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant then "/" + .platform.variant else "" end)=\(.digest)"' \
+                    | sort -u
+                )"
+
+                DH_CHILD_MAP="$(
+                  echo "$DH_LATEST_RAW" \
+                    | jq -r '.manifests[]
+                        | select(.platform.os != null and .platform.architecture != null)
+                        | "\(.platform.os)/\(.platform.architecture)\(if .platform.variant then "/" + .platform.variant else "" end)=\(.digest)"' \
+                    | sort -u
+                )"
+
+                if [[ -z "$GHCR_CHILD_MAP" || -z "$DH_CHILD_MAP" ]]; then
+                  echo "::warning::Child manifest digest extraction failed for multi-arch comparison (DH is secondary mirror)"
+                elif [[ "$GHCR_CHILD_MAP" != "$DH_CHILD_MAP" ]]; then
+                  echo "::warning::Docker Hub latest child manifest digests do not match GHCR latest (DH is secondary mirror)"
+                  echo "GHCR child map:" >&2
+                  echo "$GHCR_CHILD_MAP" >&2
+                  echo "Docker Hub child map:" >&2
+                  echo "$DH_CHILD_MAP" >&2
+                fi
+              fi
+            else
+              GHCR_CONFIG_DIGEST="$(echo "$GHCR_LATEST_RAW" | jq -r '.config.digest // ""')"
+              DH_CONFIG_DIGEST="$(echo "$DH_LATEST_RAW" | jq -r '.config.digest // ""')"
+
+              GHCR_LAYER_DIGESTS="$(echo "$GHCR_LATEST_RAW" | jq -r '.layers[]?.digest // empty' | sort -u)"
+              DH_LAYER_DIGESTS="$(echo "$DH_LATEST_RAW" | jq -r '.layers[]?.digest // empty' | sort -u)"
+
+              if [[ -z "$GHCR_CONFIG_DIGEST" || -z "$DH_CONFIG_DIGEST" ]]; then
+                echo "::warning::Config digest extraction failed for single-arch comparison (DH is secondary mirror)"
+              elif [[ "$GHCR_CONFIG_DIGEST" != "$DH_CONFIG_DIGEST" || "$GHCR_LAYER_DIGESTS" != "$DH_LAYER_DIGESTS" ]]; then
+                echo "::warning::Docker Hub latest single-arch content digests do not match GHCR latest (DH is secondary mirror)"
+                echo "GHCR config digest: $GHCR_CONFIG_DIGEST" >&2
+                echo "Docker Hub config digest: $DH_CONFIG_DIGEST" >&2
+                echo "GHCR layer digests:" >&2
+                echo "$GHCR_LAYER_DIGESTS" >&2
+                echo "Docker Hub layer digests:" >&2
+                echo "$DH_LAYER_DIGESTS" >&2
+              fi
+            fi
+          else
+            echo "::warning::Deep raw latest verification skipped for Docker Hub; GHCR self-consistency checks passed"
           fi
+        else
+          echo "::warning::Docker Hub deep verification skipped; GHCR self-consistency checks passed"
         fi
 
         echo "Latest tag verification passed for version ${LATEST_VERSION}"
