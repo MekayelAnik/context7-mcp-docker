@@ -21,6 +21,11 @@ on:
         description: Base image used by DockerfileModifier
         required: true
         type: string
+      haproxy_image:
+        description: HAProxy image for QUIC/H3 support (GHCR mirror with Docker Hub fallback)
+        required: false
+        type: string
+        default: 'haproxy:lts'
       ghcr_repo:
         description: GHCR repository
         required: true
@@ -86,6 +91,18 @@ jobs:
         include: ${{ fromJson(inputs.versions_json) }}
 
     steps:
+      - name: Sanitize inputs (trim whitespace)
+        id: sanitize
+        shell: bash
+        run: |
+          set -euo pipefail
+          trim() { local v="$*"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}" ; printf '%s' "$v"; }
+          echo "ghcr_repo=$(trim '${{ inputs.ghcr_repo }}')" >> "$GITHUB_OUTPUT"
+          echo "dockerhub_repo=$(trim '${{ inputs.dockerhub_repo }}')" >> "$GITHUB_OUTPUT"
+          echo "default_platforms=$(trim '${{ inputs.default_platforms }}')" >> "$GITHUB_OUTPUT"
+          echo "base_image_default=$(trim '${{ inputs.base_image_default }}')" >> "$GITHUB_OUTPUT"
+          echo "haproxy_image=$(trim '${{ inputs.haproxy_image }}')" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -114,7 +131,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          RESULT="$({ FORCE_BUILD="${{ inputs.force_build }}" GHCR_REPO="${{ inputs.ghcr_repo }}" VERSION="${{ matrix.version }}" bash .github/scripts/check-existing-tags.sh; } )"
+          RESULT="$({ FORCE_BUILD="${{ inputs.force_build }}" GHCR_REPO="${{ steps.sanitize.outputs.ghcr_repo }}" VERSION="${{ matrix.version }}" bash .github/scripts/check-existing-tags.sh; } )"
           echo "$RESULT"
           SKIP_LINE="$(echo "$RESULT" | awk -F= '/^skip_build=/{print $0}' | tail -n1)"
           if [[ -z "$SKIP_LINE" ]]; then
@@ -128,9 +145,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Using base image: ${{ inputs.base_image_default }}"
+          echo "Using base image: ${{ steps.sanitize.outputs.base_image_default }}"
           mkdir -p build_data
-          echo "${{ inputs.base_image_default }}" > ./build_data/base-image
+          echo "${{ steps.sanitize.outputs.base_image_default }}" > ./build_data/base-image
+
+          # Resolve HAProxy image with fallback: try GHCR mirror, fall back to Docker Hub
+          HAPROXY_IMG="${{ steps.sanitize.outputs.haproxy_image }}"
+          if ! docker buildx imagetools inspect "$HAPROXY_IMG" >/dev/null 2>&1; then
+            # Strip GHCR prefix (ghcr.io/<owner>/base-images/<image>:<tag> → <image>:<tag>)
+            HAPROXY_FALLBACK="${HAPROXY_IMG##*/}"
+            echo "HAProxy image '$HAPROXY_IMG' not available, falling back to '$HAPROXY_FALLBACK'"
+            HAPROXY_IMG="$HAPROXY_FALLBACK"
+          fi
+          echo "Using HAProxy image: $HAPROXY_IMG"
+          echo "$HAPROXY_IMG" > ./build_data/haproxy-image
+
           echo "${{ matrix.version }}" > ./build_data/version
           touch ./build_data/build
           bash ./DockerfileModifier.sh
@@ -148,27 +177,27 @@ jobs:
           context: .
           file: ./Dockerfile.context7-mcp
           push: true
-          platforms: ${{ inputs.default_platforms }}
+          platforms: ${{ steps.sanitize.outputs.default_platforms }}
           tags: |
-            ${{ inputs.ghcr_repo }}:${{ matrix.image_tag }}
-            ${{ inputs.ghcr_repo }}:${{ matrix.version }}
+            ${{ steps.sanitize.outputs.ghcr_repo }}:${{ matrix.image_tag }}
+            ${{ steps.sanitize.outputs.ghcr_repo }}:${{ matrix.version }}
           cache-from: |
-            type=registry,ref=${{ inputs.ghcr_repo }}:buildcache-${{ matrix.version }}
-            type=registry,ref=${{ inputs.dockerhub_repo }}:buildcache-${{ matrix.version }}
+            type=registry,ref=${{ steps.sanitize.outputs.ghcr_repo }}:buildcache-${{ matrix.version }}
+            type=registry,ref=${{ steps.sanitize.outputs.dockerhub_repo }}:buildcache-${{ matrix.version }}
           cache-to: |
-            type=registry,ref=${{ inputs.ghcr_repo }}:buildcache-${{ matrix.version }},mode=max
-            type=registry,ref=${{ inputs.dockerhub_repo }}:buildcache-${{ matrix.version }},mode=max
+            type=registry,ref=${{ steps.sanitize.outputs.ghcr_repo }}:buildcache-${{ matrix.version }},mode=max
+            type=registry,ref=${{ steps.sanitize.outputs.dockerhub_repo }}:buildcache-${{ matrix.version }},mode=max
           outputs: type=registry,oci-mediatypes=true,${{ steps.profile.outputs.compression_params }},export-cache-concurrency=${{ inputs.export_cache_concurrency }},export-layers-concurrency=${{ inputs.export_layers_concurrency }}
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             CONTEXT7_VERSION=${{ matrix.version }}
-            BASE_IMAGE=${{ inputs.base_image_default }}
+            BASE_IMAGE=${{ steps.sanitize.outputs.base_image_default }}
           provenance: false
           sbom: false
 
       - name: Sync Docker Hub from GHCR (secondary mirror)
         uses: ./.github/actions/registry-sync
         with:
-          dockerhub_repo: ${{ inputs.dockerhub_repo }}
-          ghcr_repo: ${{ inputs.ghcr_repo }}
+          dockerhub_repo: ${{ steps.sanitize.outputs.dockerhub_repo }}
+          ghcr_repo: ${{ steps.sanitize.outputs.ghcr_repo }}
           tags: ${{ matrix.image_tag }},${{ matrix.version }}
