@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-/usr/local/bin/banner.sh
 
 readonly DEFAULT_PUID=1000
 readonly DEFAULT_PGID=1000
@@ -527,8 +526,10 @@ main() {
         exec "$@"
     fi
 
-    [[ -n "${PUID:-}" ]] && PUID="$(trim "$PUID")"
-    [[ -n "${PGID:-}" ]] && PGID="$(trim "$PGID")"
+    PUID="${PUID:-$DEFAULT_PUID}"
+    PGID="${PGID:-$DEFAULT_PGID}"
+    PUID="$(trim "$PUID")"
+    PGID="$(trim "$PGID")"
 
     PORT="${PORT:-$DEFAULT_PORT}"
     INTERNAL_PORT="${INTERNAL_PORT:-$DEFAULT_INTERNAL_PORT}"
@@ -556,6 +557,10 @@ main() {
     if [[ ! -f "$FIRST_RUN_FILE" ]]; then
         handle_first_run
     fi
+
+    # Export variables for banner.sh (runs as child process)
+    export PORT PUID PGID PROTOCOL
+    /usr/local/bin/banner.sh
 
     if is_true "$ENABLE_HTTPS"; then
         prepare_tls_pem "$TLS_CERT_PATH" "$TLS_KEY_PATH" "$TLS_PEM_PATH" "$TLS_DAYS" "$TLS_CN" "$TLS_SAN"

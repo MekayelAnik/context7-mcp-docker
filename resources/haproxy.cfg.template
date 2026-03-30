@@ -19,20 +19,20 @@ defaults
 frontend mcp_frontend
     bind *:__SERVER_PORT__ __BIND_PARAMS__
     __QUIC_BIND_LINE__
-    
+
     # Define ACL for health check endpoint from localhost
     acl is_health_check path /healthz
     acl is_localhost src 127.0.0.1 ::1
-    
+
     # Define ACL that's always false (for CORS disabled scenario)
     acl always_false always_false
-    
+
     # Extract Authorization header
     http-request set-var(txn.auth_header) req.hdr(Authorization)
-    
+
     # Extract Origin header for CORS validation
     http-request set-var(txn.origin) req.hdr(Origin)
-    
+
     __CORS_CHECK__
 
     # Handle CORS preflight (OPTIONS) requests BEFORE auth (browsers don't send credentials on preflight)
