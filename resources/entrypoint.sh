@@ -43,7 +43,7 @@ validate_port() {
     local fallback="$3"
 
     if ! is_positive_int "$value" || [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
-        echo "Invalid ${name}='${value}', using default ${fallback}"
+        echo "Invalid ${name}='${value}', using default ${fallback}" >&2
         printf '%s' "$fallback"
         return
     fi
@@ -56,7 +56,7 @@ validate_tls_days() {
     local fallback="$2"
 
     if ! is_positive_int "$value"; then
-        echo "Invalid TLS_DAYS='${value}', using default ${fallback}"
+        echo "Invalid TLS_DAYS='${value}', using default ${fallback}" >&2
         printf '%s' "$fallback"
         return
     fi
@@ -215,7 +215,37 @@ handle_first_run() {
 }
 
 haproxy_supports_quic() {
-    haproxy -vv 2>/dev/null | grep -Eiq 'USE_QUIC=1|[[:space:]]quic[[:space:]]: mode=HTTP'
+    # Build flag check (fast pre-filter)
+    # Note: avoid pipe + grep -q with pipefail (SIGPIPE can cause false negatives)
+    local vv_output
+    vv_output="$(haproxy -vv 2>/dev/null)" || true
+    if ! echo "$vv_output" | grep -Eiq 'USE_QUIC=1|[[:space:]]quic[[:space:]]: mode=HTTP'; then
+        return 1
+    fi
+
+    # Runtime probe: verify QUIC bind actually works with the current SSL library
+    local probe_dir probe_cfg probe_pem output
+    probe_dir="$(mktemp -d)" || return 1
+    probe_cfg="${probe_dir}/probe.cfg"
+    probe_pem="${probe_dir}/probe.pem"
+
+    if ! openssl req -x509 -newkey rsa:2048 -keyout "${probe_dir}/probe.key" -out "${probe_dir}/probe.crt" \
+         -days 1 -nodes -subj "/CN=quic-probe" -batch 2>/dev/null; then
+        rm -rf "$probe_dir"
+        return 1
+    fi
+    cat "${probe_dir}/probe.crt" "${probe_dir}/probe.key" > "$probe_pem"
+
+    printf 'global\n  log stderr format raw local0\ndefaults\n  mode http\n  timeout connect 5s\n  timeout client 5s\n  timeout server 5s\nfrontend quic_probe\n  bind quic4@*:65535 ssl crt %s alpn h3\n  default_backend quic_probe_be\nbackend quic_probe_be\n  server s1 127.0.0.1:1\n' \
+        "$probe_pem" > "$probe_cfg"
+
+    output="$(haproxy -c -f "$probe_cfg" 2>&1)" || true
+    rm -rf "$probe_dir"
+
+    if echo "$output" | grep -qi 'does not support the QUIC protocol'; then
+        return 1
+    fi
+    return 0
 }
 
 ensure_parent_dir() {
@@ -263,7 +293,7 @@ resolve_listener_protocols() {
     local mode="$1"
 
     if ! is_true "$ENABLE_HTTPS"; then
-        if [[ "$mode" != "h1" ]]; then
+        if [[ "$mode" != "h1" && "$mode" != "auto" ]]; then
             echo "HTTP_VERSION_MODE='${mode}' requested without TLS; falling back to HTTP/1.1" >&2
         fi
 
@@ -343,11 +373,16 @@ generate_haproxy_config() {
 
     local api_key_check
     if [[ -n "$API_KEY" ]]; then
-        local escaped_key_regex
-        escaped_key_regex="$(escape_haproxy_regex "$API_KEY")"
+        local escaped_key_sed
+        escaped_key_sed="$(escape_sed_replacement "$API_KEY")"
         api_key_check="    # API Key authentication enabled (localhost /healthz excluded)
     acl auth_header_present var(txn.auth_header) -m found
-    acl auth_valid var(txn.auth_header) -m reg ^[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]]+${escaped_key_regex}$
+
+    # Extract token: strip 'Bearer ' prefix (case-insensitive) into txn.api_token
+    http-request set-var(txn.api_token) var(txn.auth_header),regsub(^[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]]+,)
+
+    # Validate extracted token via exact string match (no regex escaping issues)
+    acl auth_valid var(txn.api_token) -m str ${escaped_key_sed}
 
     # Deny requests without valid authentication (except localhost health checks)
     http-request deny deny_status 401 content-type \"application/json\" string '{\"error\":\"Unauthorized\",\"message\":\"Valid API key required\"}' if !is_health_check !auth_header_present

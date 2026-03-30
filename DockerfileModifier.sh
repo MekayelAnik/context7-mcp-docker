@@ -3,6 +3,7 @@ set -ex
 # Set variables first
 REPO_NAME='context7-mcp'
 BASE_IMAGE=$(cat ./build_data/base-image 2>/dev/null || echo "node:current-alpine")
+HAPROXY_IMAGE=$(cat ./build_data/haproxy-image 2>/dev/null || echo "haproxy:lts")
 CONTEXT7_VERSION=$(cat ./build_data/version 2>/dev/null || exit 1)
 CONTEXT7_MCP_PKG="@upstash/context7-mcp@${CONTEXT7_VERSION}"
 SUPERGATEWAY_PKG='supergateway@latest'
@@ -28,6 +29,7 @@ else
         echo "ARG BASE_IMAGE=$BASE_IMAGE"
         echo "ARG CONTEXT7_VERSION=$CONTEXT7_VERSION"
         cat << EOF
+FROM $HAPROXY_IMAGE AS haproxy-src
 FROM $BASE_IMAGE AS build
 
 # Author info:
@@ -47,6 +49,9 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositori
     echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories && \
     apk --update-cache --no-cache add bash shadow su-exec tzdata haproxy netcat-openbsd openssl && \
     rm -rf /var/cache/apk/*
+
+# HAProxy with native QUIC/H3 support from official image
+COPY --from=haproxy-src /usr/local/sbin/haproxy /usr/sbin/haproxy
 
 # Check if package exists before installing
 RUN echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \
@@ -78,9 +83,9 @@ ARG API_KEY=""
 ENV PORT=\${PORT}
 ENV API_KEY=\${API_KEY}
 
-# Health check using nc (netcat) to check if the port is open
+# L7 health check: verifies HAProxy + MCP backend respond with HTTP 200
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
-    CMD nc -z localhost \${PORT:-8010} || exit 1
+    CMD printf "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" | nc localhost \${PORT:-8010} | grep -q "200 OK" || exit 1
 
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
