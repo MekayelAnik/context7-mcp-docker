@@ -33,7 +33,23 @@ if [[ -n "$MANUAL_VERSIONS_RAW" && "$REQUESTED_ACTION" == "build-versions" ]]; t
 
     LATEST_VERSION="$(echo "$VERSIONS_NEWEST" | head -n1)"
 else
-    curl -fsSL "${NPM_REGISTRY}/${NPM_PACKAGE}" -o npm-package.json
+    # Use cached NPM metadata if available and recent (< 1 hour old)
+    NPM_CACHE_FILE="${RUNNER_TEMP:-/tmp}/npm-package-cache.json"
+    CACHE_MAX_AGE=3600
+
+    if [[ -f "$NPM_CACHE_FILE" ]]; then
+        CACHE_AGE=$(( $(date +%s) - $(stat -c %Y "$NPM_CACHE_FILE" 2>/dev/null || echo 0) ))
+        if [[ "$CACHE_AGE" -lt "$CACHE_MAX_AGE" ]]; then
+            echo "Using cached NPM metadata (${CACHE_AGE}s old)"
+            cp "$NPM_CACHE_FILE" npm-package.json
+        else
+            curl -fsSL "${NPM_REGISTRY}/${NPM_PACKAGE}" -o npm-package.json
+            cp npm-package.json "$NPM_CACHE_FILE"
+        fi
+    else
+        curl -fsSL "${NPM_REGISTRY}/${NPM_PACKAGE}" -o npm-package.json
+        cp npm-package.json "$NPM_CACHE_FILE"
+    fi
 
     VERSIONS_NEWEST="$({
         jq -r '.versions | keys[]' npm-package.json \

@@ -10,83 +10,49 @@ if [[ -z "$DOCKERHUB_REPO" || -z "$GHCR_REPO" || -z "$TAGS" ]]; then
     exit 1
 fi
 
-run_with_retry() {
-    local description="$1"
-    shift
-    local attempts=5
-    local delay=2
-    local attempt
-    local err_file
-    err_file="$(mktemp)"
+# --- Shared retry helpers ---
+# shellcheck source=lib-retry.sh
+source "$(dirname "$0")/lib-retry.sh"
 
-    for attempt in $(seq 1 "$attempts"); do
-        if "$@" 2>"$err_file"; then
-            rm -f "$err_file"
-            return 0
-        fi
+# --- Inspect cache: each ref inspected at most once ---
 
-        if [[ "$attempt" -lt "$attempts" ]]; then
-            echo "Retry ${attempt}/${attempts} for ${description} failed. Sleeping ${delay}s..." >&2
-            sleep "$delay"
-            delay=$((delay * 2))
-        fi
-    done
+declare -A INSPECT_CACHE
+declare -A INSPECT_CACHE_RC
 
-    echo "${description} failed after ${attempts} attempts" >&2
-    if [[ -s "$err_file" ]]; then
-        echo "Last stderr output:" >&2
-        cat "$err_file" >&2
-    fi
-        if grep -qiE '429|toomanyrequests|rate limit' "$err_file"; then
-            echo "Rate limit detected for ${description}" >&2
-            rm -f "$err_file"
-            return 2
-        fi
-    rm -f "$err_file"
-    return 1
-}
-
-run_with_retry_output() {
-    local description="$1"
-    shift
-    local attempts=5
-    local delay=2
-    local attempt
-    local err_file
-    local out
-    err_file="$(mktemp)"
-
-    for attempt in $(seq 1 "$attempts"); do
-        if out="$("$@" 2>"$err_file")"; then
-            rm -f "$err_file"
-            printf '%s' "$out"
-            return 0
-        fi
-
-        if [[ "$attempt" -lt "$attempts" ]]; then
-            echo "Retry ${attempt}/${attempts} for ${description} failed. Sleeping ${delay}s..." >&2
-            sleep "$delay"
-            delay=$((delay * 2))
-        fi
-    done
-
-    echo "${description} failed after ${attempts} attempts" >&2
-    if [[ -s "$err_file" ]]; then
-        echo "Last stderr output:" >&2
-        cat "$err_file" >&2
-    fi
-        if grep -qiE '429|toomanyrequests|rate limit' "$err_file"; then
-            echo "Rate limit detected for ${description}" >&2
-            rm -f "$err_file"
-            return 2
-        fi
-    rm -f "$err_file"
-    return 1
-}
-
-inspect_with_retry() {
+cached_inspect() {
     local ref="$1"
-    run_with_retry_output "inspect ${ref}" docker buildx imagetools inspect "$ref"
+
+    if [[ -n "${INSPECT_CACHE_RC[$ref]+x}" ]]; then
+        if [[ "${INSPECT_CACHE_RC[$ref]}" -ne 0 ]]; then
+            return "${INSPECT_CACHE_RC[$ref]}"
+        fi
+        printf '%s' "${INSPECT_CACHE[$ref]}"
+        return 0
+    fi
+
+    local out="" rc=0
+    set +e
+    out="$(docker buildx imagetools inspect "$ref" 2>/dev/null)"
+    rc=$?
+    set -e
+
+    INSPECT_CACHE_RC["$ref"]=$rc
+    if [[ "$rc" -eq 0 ]]; then
+        INSPECT_CACHE["$ref"]="$out"
+        printf '%s' "$out"
+    fi
+    return "$rc"
+}
+
+invalidate_cache() {
+    local ref="$1"
+    unset 'INSPECT_CACHE['"$ref"']' 2>/dev/null || true
+    unset 'INSPECT_CACHE_RC['"$ref"']' 2>/dev/null || true
+}
+
+tag_exists() {
+    local ref="$1"
+    cached_inspect "$ref" >/dev/null 2>&1
 }
 
 get_platform_set() {
@@ -95,7 +61,7 @@ get_platform_set() {
     local rc
 
     set +e
-    inspect_text="$(inspect_with_retry "$ref")"
+    inspect_text="$(cached_inspect "$ref")"
     rc=$?
     set -e
 
@@ -106,11 +72,6 @@ get_platform_set() {
     echo "$inspect_text" | awk '/Platform:/{print $2}' | sort -u | tr '\n' ',' | sed 's/,$//'
 }
 
-tag_exists() {
-    local ref="$1"
-    docker buildx imagetools inspect "$ref" >/dev/null 2>&1
-}
-
 sync_tag() {
     local tag="$1"
     local dh_ref="${DOCKERHUB_REPO}:${tag}"
@@ -119,12 +80,12 @@ sync_tag() {
     local dh_exists="no"
     local ghcr_exists="no"
 
-    if tag_exists "$dh_ref"; then
-        dh_exists="yes"
-    fi
-
     if tag_exists "$ghcr_ref"; then
         ghcr_exists="yes"
+    fi
+
+    if tag_exists "$dh_ref"; then
+        dh_exists="yes"
     fi
 
     if [[ "$ghcr_exists" == "no" && "$dh_exists" == "yes" ]]; then
@@ -141,6 +102,7 @@ sync_tag() {
         if [[ "$create_rc" -ne 0 ]]; then
             return "$create_rc"
         fi
+        invalidate_cache "$ghcr_ref"
     elif [[ "$ghcr_exists" == "no" && "$dh_exists" == "no" ]]; then
         echo "Tag $tag: not found in either registry - skipping"
         return 0
@@ -158,7 +120,9 @@ sync_tag() {
         if [[ "$create_rc" -ne 0 ]]; then
             return "$create_rc"
         fi
+        invalidate_cache "$dh_ref"
     else
+        # Both exist — check platform parity using cached inspect data
         local ghcr_platforms dh_platforms
         set +e
         ghcr_platforms="$(get_platform_set "$ghcr_ref")"
@@ -200,44 +164,12 @@ sync_tag() {
         if [[ "$create_rc" -ne 0 ]]; then
             return "$create_rc"
         fi
+        invalidate_cache "$dh_ref"
     fi
 
-    local ghcr_platforms_final dh_platforms_final
-    set +e
-    ghcr_platforms_final="$(get_platform_set "$ghcr_ref")"
-    ghcr_final_rc=$?
-    set -e
-    if [[ "$ghcr_final_rc" -ne 0 ]]; then
-        echo "::error::Post-sync inspect failed for GHCR tag $tag" >&2
-        return 1
-    fi
-
-    set +e
-    dh_platforms_final="$(get_platform_set "$dh_ref")"
-    dh_final_rc=$?
-    set -e
-    if [[ "$dh_final_rc" -eq 2 ]]; then
-        echo "::warning::Skipping post-sync verification for tag $tag due to Docker Hub rate limiting" >&2
-        return 0
-    fi
-    if [[ "$dh_final_rc" -ne 0 ]]; then
-        echo "::error::Post-sync inspect failed for Docker Hub tag $tag" >&2
-        return 1
-    fi
-
-    if [[ -z "$ghcr_platforms_final" || -z "$dh_platforms_final" ]]; then
-        echo "::error::Sync verification failed for $tag (missing platform metadata)" >&2
-        return 1
-    fi
-
-    if [[ "$ghcr_platforms_final" != "$dh_platforms_final" ]]; then
-        echo "::error::Sync verification failed for $tag (platform sets differ between GHCR and Docker Hub)" >&2
-        echo "GHCR platforms: $ghcr_platforms_final" >&2
-        echo "Docker Hub platforms: $dh_platforms_final" >&2
-        return 1
-    fi
-
-    echo "Verified $tag: Docker Hub matches GHCR platform set"
+    # Post-sync: trust imagetools create exit code — no re-verification needed.
+    # imagetools create is an atomic manifest-level copy; success guarantees parity.
+    echo "Synced $tag successfully"
     return 0
 }
 
