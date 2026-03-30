@@ -24,7 +24,7 @@
     "before 6am on monday"
   ],
   "automerge": true,
-  "platformAutomerge": true,
+  "platformAutomerge": false,
   "automergeType": "pr",
   "automergeStrategy": "squash",
   "rebaseWhen": "behind-base-branch",
