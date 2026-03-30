@@ -71,3 +71,5 @@ jobs:
           date_tag: ${{ steps.sanitize.outputs.date_tag }}
           ghcr_repo: ${{ steps.sanitize.outputs.ghcr_repo }}
           dockerhub_repo: ${{ steps.sanitize.outputs.dockerhub_repo }}
+          gh_token: ${{ github.token }}
+          github_repository: ${{ github.repository }}

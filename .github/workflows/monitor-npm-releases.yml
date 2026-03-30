@@ -289,8 +289,30 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          jq -n --arg v "$LATEST" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{npm_latest_version: $v, updated_at: $t}' > state.json
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Read existing state to preserve or reset latest_version_since
+          EXISTING_VERSION=""
+          EXISTING_SINCE=""
+          if [[ -f state.json ]]; then
+            EXISTING_VERSION="$(jq -r '.npm_latest_version // ""' state.json)"
+            EXISTING_SINCE="$(jq -r '.latest_version_since // ""' state.json)"
+          fi
+
+          # Determine latest_version_since
+          if [[ "$LATEST" != "$EXISTING_VERSION" || -z "$EXISTING_SINCE" ]]; then
+            SINCE="$NOW"
+            echo "Version changed or first run — setting latest_version_since to $SINCE"
+          else
+            SINCE="$EXISTING_SINCE"
+            echo "Version unchanged — preserving latest_version_since ($SINCE)"
+          fi
+
+          jq -n \
+            --arg v "$LATEST" \
+            --arg t "$NOW" \
+            --arg s "$SINCE" \
+            '{npm_latest_version: $v, updated_at: $t, latest_version_since: $s}' > state.json
 
           git add state.json
 
