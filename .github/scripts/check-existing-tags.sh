@@ -15,10 +15,12 @@ if [[ "$FORCE_BUILD" == "true" ]]; then
     exit 0
 fi
 
+# Try docker manifest inspect first
 if docker manifest inspect "${GHCR_REPO}:${VERSION}" >/dev/null 2>&1; then
     echo "Image version already present in GHCR; skipping build"
     echo "skip_build=true"
-else
-    echo "Image version not found in GHCR; building"
-    echo "skip_build=false"
+    exit 0
 fi
+
+echo "Image version not found in GHCR; building"
+echo "skip_build=false"

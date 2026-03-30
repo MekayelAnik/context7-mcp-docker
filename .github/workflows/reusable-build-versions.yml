@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 4
       matrix:
         include: ${{ fromJson(inputs.versions_json) }}
 
@@ -182,11 +182,11 @@ jobs:
             ${{ steps.sanitize.outputs.ghcr_repo }}:${{ matrix.image_tag }}
             ${{ steps.sanitize.outputs.ghcr_repo }}:${{ matrix.version }}
           cache-from: |
+            type=gha,scope=context7-${{ matrix.version }}
             type=registry,ref=${{ steps.sanitize.outputs.ghcr_repo }}:buildcache-${{ matrix.version }}
-            type=registry,ref=${{ steps.sanitize.outputs.dockerhub_repo }}:buildcache-${{ matrix.version }}
           cache-to: |
-            type=registry,ref=${{ steps.sanitize.outputs.ghcr_repo }}:buildcache-${{ matrix.version }},mode=max
-            type=registry,ref=${{ steps.sanitize.outputs.dockerhub_repo }}:buildcache-${{ matrix.version }},mode=max
+            type=gha,scope=context7-${{ matrix.version }},mode=max
+            type=registry,ref=${{ steps.sanitize.outputs.ghcr_repo }}:buildcache-${{ matrix.version }},mode=max,compression=zstd
           outputs: type=registry,oci-mediatypes=true,${{ steps.profile.outputs.compression_params }},export-cache-concurrency=${{ inputs.export_cache_concurrency }},export-layers-concurrency=${{ inputs.export_layers_concurrency }}
           build-args: |
             BUILDKIT_INLINE_CACHE=1

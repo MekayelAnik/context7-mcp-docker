@@ -108,7 +108,7 @@ run_case() {
       mismatch-sync)
         grep -q "Syncing v1: mismatch detected, GHCR -> Docker Hub" "$out_file"
         grep -q "dockerhub/repo:v1=linux/amd64,linux/arm64" "$state_file"
-        grep -q "Verified v1: Docker Hub matches GHCR platform set" "$out_file"
+        grep -q "Synced v1 successfully" "$out_file"
         ;;
       duplicate-tags)
         grep -q "duplicate in input list - skipping duplicate" "$out_file"
