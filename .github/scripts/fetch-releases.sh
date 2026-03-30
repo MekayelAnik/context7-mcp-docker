@@ -21,7 +21,8 @@ if [[ -n "$MANUAL_VERSIONS_RAW" && "$REQUESTED_ACTION" == "build-versions" ]]; t
             | tr ',' '\n' \
             | sed 's/^ *//; s/ *$//' \
             | sed '/^$/d' \
-            | grep -Evi '(beta|canary)'
+            | grep -Evi '(beta|canary)' \
+            | head -n "$MAX_VERSIONS"
     } || true)"
 
     if [[ -z "$VERSIONS_NEWEST" ]]; then
