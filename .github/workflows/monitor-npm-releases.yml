@@ -60,7 +60,7 @@ env:
   GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64' }}
   BASE_IMAGE_DEFAULT: ${{ github.event.inputs.base_image || vars.BASE_IMAGE_DEFAULT || 'node:current-alpine' }}
-  HAPROXY_IMAGE: ${{ vars.HAPROXY_IMAGE || 'haproxy:lts' }}
+  HAPROXY_IMAGE: ${{ vars.HAPROXY_IMAGE || 'haproxy:lts-alpine' }}
   EXPORT_CACHE_CONCURRENCY: '4'
   EXPORT_LAYERS_CONCURRENCY: '4'
   BUILDKIT_STEP_LOG_MAX_SIZE: '50000000'
@@ -213,7 +213,7 @@ jobs:
       build_profile: ${{ github.event.inputs.build_profile || 'production' }}
       force_build: ${{ needs.fetch-releases.outputs.normalized_force_build }}
       base_image_default: ${{ github.event.inputs.base_image || vars.BASE_IMAGE_DEFAULT || 'node:current-alpine' }}
-      haproxy_image: ${{ vars.HAPROXY_IMAGE || 'haproxy:lts' }}
+      haproxy_image: ${{ vars.HAPROXY_IMAGE || 'haproxy:lts-alpine' }}
       ghcr_repo: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
       dockerhub_repo: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
       default_platforms: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64' }}

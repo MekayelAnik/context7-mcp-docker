@@ -3,7 +3,7 @@ set -euxo pipefail
 # Set variables first
 REPO_NAME='context7-mcp'
 BASE_IMAGE=$(cat ./build_data/base-image 2>/dev/null || echo "node:current-alpine")
-HAPROXY_IMAGE=$(cat ./build_data/haproxy-image 2>/dev/null || echo "haproxy:lts")
+HAPROXY_IMAGE=$(cat ./build_data/haproxy-image 2>/dev/null || echo "haproxy:lts-alpine")
 CONTEXT7_VERSION=$(cat ./build_data/version 2>/dev/null || exit 1)
 CONTEXT7_MCP_PKG="@upstash/context7-mcp@${CONTEXT7_VERSION}"
 SUPERGATEWAY_PKG='supergateway@latest'
