@@ -184,6 +184,8 @@ jobs:
           tags: |
             ${{ steps.sanitize.outputs.ghcr_repo }}:${{ matrix.image_tag }}
             ${{ steps.sanitize.outputs.ghcr_repo }}:${{ matrix.version }}
+            ${{ steps.sanitize.outputs.dockerhub_repo }}:${{ matrix.image_tag }}
+            ${{ steps.sanitize.outputs.dockerhub_repo }}:${{ matrix.version }}
           cache-from: |
             type=gha,scope=context7-${{ matrix.version }}
             type=registry,ref=${{ steps.sanitize.outputs.ghcr_repo }}:buildcache-${{ matrix.version }}
@@ -198,7 +200,8 @@ jobs:
           provenance: false
           sbom: false
 
-      - name: Sync Docker Hub from GHCR (secondary mirror)
+      - name: Verify Docker Hub parity (fallback sync if dual-push missed DH)
+        if: steps.check-existing.outputs.skip_build != 'true'
         uses: ./.github/actions/registry-sync
         with:
           dockerhub_repo: ${{ steps.sanitize.outputs.dockerhub_repo }}
