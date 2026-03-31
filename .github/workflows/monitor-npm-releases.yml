@@ -234,7 +234,7 @@ jobs:
     needs: [quick-check, fetch-releases, build-versions]
     if: |
       always() &&
-      needs.fetch-releases.outputs.latest_version != '' &&
+      (needs.fetch-releases.outputs.latest_version != '' || needs.fetch-releases.outputs.normalized_action == 'force-promote-latest') &&
       (
         needs.fetch-releases.outputs.normalized_action == 'promote-latest' ||
         needs.fetch-releases.outputs.normalized_action == 'force-promote-latest' ||
@@ -244,7 +244,7 @@ jobs:
       )
     uses: ./.github/workflows/reusable-promote-latest.yml
     with:
-      latest_version: ${{ needs.fetch-releases.outputs.latest_version }}
+      latest_version: ${{ needs.fetch-releases.outputs.normalized_action == 'force-promote-latest' && needs.fetch-releases.outputs.normalized_versions != '' && needs.fetch-releases.outputs.normalized_versions || needs.fetch-releases.outputs.latest_version }}
       date_tag: ${{ needs.fetch-releases.outputs.date_tag }}
       ghcr_repo: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
       dockerhub_repo: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
