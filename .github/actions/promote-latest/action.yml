@@ -20,6 +20,10 @@ inputs:
   github_repository:
     description: GitHub repository (owner/repo) for API calls
     required: true
+  force_latest:
+    description: Skip digest check and force re-promote latest
+    required: false
+    default: 'false'
   force_stable:
     description: Skip 5-day soak and force promote to stable
     required: false
@@ -181,7 +185,11 @@ runs:
         # Step 2: Early-exit if GHCR latest already matches source
         GHCR_LATEST_DIGEST="$(extract_digest "${GHCR_REPO}:latest" || true)"
 
-        if [[ -n "$GHCR_LATEST_DIGEST" && "$GHCR_SOURCE_DIGEST" == "$GHCR_LATEST_DIGEST" ]]; then
+        FORCE_LATEST="${{ inputs.force_latest }}"
+
+        if [[ "$FORCE_LATEST" == "true" ]]; then
+          echo "Force latest promotion requested — skipping digest check"
+        elif [[ -n "$GHCR_LATEST_DIGEST" && "$GHCR_SOURCE_DIGEST" == "$GHCR_LATEST_DIGEST" ]]; then
           echo "GHCR latest already points to version ${LATEST_VERSION} (digest: ${GHCR_LATEST_DIGEST})"
 
           # Check Docker Hub parity (rate-limit tolerant)
