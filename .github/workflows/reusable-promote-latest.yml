@@ -19,6 +19,11 @@ on:
         description: Docker Hub repository
         required: true
         type: string
+      force_stable:
+        description: Skip 5-day soak and force promote to stable
+        required: false
+        type: boolean
+        default: false
     secrets:
       DOCKERHUB_USERNAME:
         description: Docker Hub username
@@ -73,3 +78,4 @@ jobs:
           dockerhub_repo: ${{ steps.sanitize.outputs.dockerhub_repo }}
           gh_token: ${{ github.token }}
           github_repository: ${{ github.repository }}
+          force_stable: ${{ inputs.force_stable && 'true' || 'false' }}

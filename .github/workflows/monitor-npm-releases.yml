@@ -11,6 +11,7 @@ on:
           - auto-check
           - build-versions
           - promote-latest
+          - promote-stable
         default: auto-check
       versions:
         description: Optional versions to build (comma-separated). Empty = auto from NPM.
@@ -206,7 +207,7 @@ jobs:
   build-versions:
     name: Build selected versions
     needs: [preflight, fetch-releases]
-    if: needs.fetch-releases.outputs.should_build == 'true' && needs.fetch-releases.outputs.normalized_action != 'promote-latest'
+    if: needs.fetch-releases.outputs.should_build == 'true' && needs.fetch-releases.outputs.normalized_action != 'promote-latest' && needs.fetch-releases.outputs.normalized_action != 'promote-stable'
     uses: ./.github/workflows/reusable-build-versions.yml
     with:
       versions_json: ${{ needs.fetch-releases.outputs.versions_json }}
@@ -235,6 +236,7 @@ jobs:
       needs.fetch-releases.outputs.latest_version != '' &&
       (
         needs.fetch-releases.outputs.normalized_action == 'promote-latest' ||
+        needs.fetch-releases.outputs.normalized_action == 'promote-stable' ||
         (needs.build-versions.result == 'success' && contains(needs.fetch-releases.outputs.versions_json, needs.fetch-releases.outputs.latest_version)) ||
         needs.fetch-releases.outputs.normalized_action == 'auto-check'
       )
@@ -244,6 +246,7 @@ jobs:
       date_tag: ${{ needs.fetch-releases.outputs.date_tag }}
       ghcr_repo: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
       dockerhub_repo: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
+      force_stable: ${{ needs.fetch-releases.outputs.normalized_action == 'promote-stable' }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

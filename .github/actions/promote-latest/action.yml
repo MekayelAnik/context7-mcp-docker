@@ -20,6 +20,10 @@ inputs:
   github_repository:
     description: GitHub repository (owner/repo) for API calls
     required: true
+  force_stable:
+    description: Skip 5-day soak and force promote to stable
+    required: false
+    default: 'false'
 
 outputs:
   source_tag_ghcr:
@@ -383,9 +387,12 @@ runs:
         fi
 
         DAYS_AS_LATEST=$(( (NOW_EPOCH - SINCE_EPOCH) / 86400 ))
+        FORCE_STABLE="${{ inputs.force_stable }}"
         echo "Version $LATEST_VERSION has been :latest for $DAYS_AS_LATEST day(s) (since $LATEST_SINCE)"
 
-        if [[ "$DAYS_AS_LATEST" -lt 5 ]]; then
+        if [[ "$FORCE_STABLE" == "true" ]]; then
+          echo "Force stable promotion requested — skipping 5-day soak"
+        elif [[ "$DAYS_AS_LATEST" -lt 5 ]]; then
           echo "Not eligible for :stable promotion (need 5 days, has $DAYS_AS_LATEST)"
           echo "stable_promoted=false" >> "$GITHUB_OUTPUT"
           exit 0
