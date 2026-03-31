@@ -13,6 +13,7 @@ on:
           - promote-latest
           - force-promote-latest
           - promote-stable
+          - force-promote-stable
         default: auto-check
       versions:
         description: Optional versions to build (comma-separated). Empty = auto from NPM.
@@ -208,7 +209,7 @@ jobs:
   build-versions:
     name: Build selected versions
     needs: [preflight, fetch-releases]
-    if: needs.fetch-releases.outputs.should_build == 'true' && needs.fetch-releases.outputs.normalized_action != 'promote-latest' && needs.fetch-releases.outputs.normalized_action != 'force-promote-latest' && needs.fetch-releases.outputs.normalized_action != 'promote-stable'
+    if: needs.fetch-releases.outputs.should_build == 'true' && needs.fetch-releases.outputs.normalized_action != 'promote-latest' && needs.fetch-releases.outputs.normalized_action != 'force-promote-latest' && needs.fetch-releases.outputs.normalized_action != 'promote-stable' && needs.fetch-releases.outputs.normalized_action != 'force-promote-stable'
     uses: ./.github/workflows/reusable-build-versions.yml
     with:
       versions_json: ${{ needs.fetch-releases.outputs.versions_json }}
@@ -239,6 +240,7 @@ jobs:
         needs.fetch-releases.outputs.normalized_action == 'promote-latest' ||
         needs.fetch-releases.outputs.normalized_action == 'force-promote-latest' ||
         needs.fetch-releases.outputs.normalized_action == 'promote-stable' ||
+        needs.fetch-releases.outputs.normalized_action == 'force-promote-stable' ||
         (needs.build-versions.result == 'success' && contains(needs.fetch-releases.outputs.versions_json, needs.fetch-releases.outputs.latest_version)) ||
         needs.fetch-releases.outputs.normalized_action == 'auto-check'
       )
@@ -249,7 +251,7 @@ jobs:
       ghcr_repo: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/context7-mcp', github.repository_owner) }}
       dockerhub_repo: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
       force_latest: ${{ needs.fetch-releases.outputs.normalized_action == 'force-promote-latest' }}
-      force_stable: ${{ needs.fetch-releases.outputs.normalized_action == 'promote-stable' }}
+      force_stable: ${{ needs.fetch-releases.outputs.normalized_action == 'promote-stable' || needs.fetch-releases.outputs.normalized_action == 'force-promote-stable' }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -331,3 +333,19 @@ jobs:
 
           git commit -m "state: update npm_latest_version to ${LATEST}"
           git push "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:pipeline-state
+
+  update-dockerhub-description:
+    name: Update Docker Hub description
+    needs: [promote-latest]
+    if: needs.promote-latest.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Sync README to Docker Hub
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/context7-mcp' }}
+          readme-filepath: ./README.md

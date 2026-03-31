@@ -413,7 +413,9 @@ runs:
         GHCR_LATEST_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:latest" 2>/dev/null | awk '/^Digest:/{print $2; exit}' || true)"
         GHCR_STABLE_DIGEST="$(docker buildx imagetools inspect "${GHCR_REPO}:stable" 2>/dev/null | awk '/^Digest:/{print $2; exit}' || true)"
 
-        if [[ -n "$GHCR_LATEST_DIGEST" && -n "$GHCR_STABLE_DIGEST" && "$GHCR_LATEST_DIGEST" == "$GHCR_STABLE_DIGEST" ]]; then
+        if [[ "$FORCE_STABLE" == "true" ]]; then
+          echo "Force stable promotion requested — skipping digest check"
+        elif [[ -n "$GHCR_LATEST_DIGEST" && -n "$GHCR_STABLE_DIGEST" && "$GHCR_LATEST_DIGEST" == "$GHCR_STABLE_DIGEST" ]]; then
           # Also check Docker Hub
           set +e
           DH_STABLE_DIGEST="$(docker buildx imagetools inspect "${DOCKERHUB_REPO}:stable" 2>/dev/null | awk '/^Digest:/{print $2; exit}')"
