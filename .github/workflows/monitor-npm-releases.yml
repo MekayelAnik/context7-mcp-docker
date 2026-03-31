@@ -235,7 +235,8 @@ jobs:
       needs.fetch-releases.outputs.latest_version != '' &&
       (
         needs.fetch-releases.outputs.normalized_action == 'promote-latest' ||
-        (needs.build-versions.result == 'success' && contains(needs.fetch-releases.outputs.versions_json, needs.fetch-releases.outputs.latest_version))
+        (needs.build-versions.result == 'success' && contains(needs.fetch-releases.outputs.versions_json, needs.fetch-releases.outputs.latest_version)) ||
+        needs.fetch-releases.outputs.normalized_action == 'auto-check'
       )
     uses: ./.github/workflows/reusable-promote-latest.yml
     with:
