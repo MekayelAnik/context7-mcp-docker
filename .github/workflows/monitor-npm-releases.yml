@@ -334,14 +334,56 @@ jobs:
           git commit -m "state: update npm_latest_version to ${LATEST}"
           git push "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:pipeline-state
 
+  update-readme-version:
+    name: Update README version
+    needs: [fetch-releases, promote-latest]
+    if: |
+      needs.promote-latest.result == 'success' &&
+      needs.fetch-releases.outputs.latest_version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ github.token }}
+
+      - name: Update version in README
+        shell: bash
+        run: |
+          set -euo pipefail
+          LATEST="${{ needs.fetch-releases.outputs.latest_version }}"
+          echo "Updating README to version $LATEST"
+
+          # Update the Available Tags table row with specific version
+          # Matches: | `X.Y.Z` | <anything> | Specific version
+          sed -i -E "s/\| \`[0-9]+\.[0-9]+\.[0-9]+\` \|(.+)\| Specific version/| \`${LATEST}\` |\1| Specific version/" README.md
+
+          if git diff --quiet README.md; then
+            echo "README already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update README version to ${LATEST}"
+          git push
+
   update-dockerhub-description:
     name: Update Docker Hub description
-    needs: [promote-latest]
-    if: needs.promote-latest.result == 'success'
+    needs: [promote-latest, update-readme-version]
+    if: |
+      always() &&
+      needs.promote-latest.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: main
       - name: Sync README to Docker Hub
         uses: peter-evans/dockerhub-description@v5
         with:
