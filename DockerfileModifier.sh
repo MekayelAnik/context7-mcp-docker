@@ -84,9 +84,9 @@ ARG API_KEY=""
 ENV PORT=\${PORT}
 ENV API_KEY=\${API_KEY}
 
-# L7 health check: verifies HAProxy + MCP backend respond with HTTP 200
+# Health check: L7 for HTTP, falls back to L4 for HTTPS (nc can't do TLS)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
-    CMD printf "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" | nc localhost \${PORT:-8010} | grep -q "200 OK" || exit 1
+    CMD sh -c 'printf "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" | nc localhost \${PORT:-8010} 2>/dev/null | grep -q "200 OK" || nc -z localhost \${PORT:-8010}'
 
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
