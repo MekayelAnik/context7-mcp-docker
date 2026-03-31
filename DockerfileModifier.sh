@@ -54,8 +54,9 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositori
 COPY --from=haproxy-src /usr/local/sbin/haproxy /usr/sbin/haproxy
 RUN mkdir -p /usr/local/sbin && ln -sf /usr/sbin/haproxy /usr/local/sbin/haproxy
 
-# Check if package exists before installing
-RUN echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \
+# Check if package exists before installing (cache mount reuses npm downloads across builds)
+RUN --mount=type=cache,target=/root/.npm \\
+    echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \
     if npm view ${CONTEXT7_MCP_PKG} >/dev/null 2>&1; then \
         echo "Package found, installing..." && \
         npm install -g ${CONTEXT7_MCP_PKG} --omit=dev --no-audit --no-fund --loglevel error && \
@@ -67,11 +68,11 @@ RUN echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \
         exit 1; \
     fi
 
-# Install Supergateway
-RUN echo "Installing Supergateway..." && \
+# Install Supergateway (cache mount shares npm cache with previous step)
+RUN --mount=type=cache,target=/root/.npm \\
+    echo "Installing Supergateway..." && \
     npm install -g ${SUPERGATEWAY_PKG} --omit=dev --no-audit --no-fund --loglevel error && \
-    npm cache clean --force && \
-    rm -rf /root/.npm /tmp/* /var/tmp/* && \
+    rm -rf /tmp/* /var/tmp/* && \
     rm -rf /usr/local/lib/node_modules/npm/man /usr/local/lib/node_modules/npm/docs /usr/local/lib/node_modules/npm/html
 
 # Use an ARG for the default port

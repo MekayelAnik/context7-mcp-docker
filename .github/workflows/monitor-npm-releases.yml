@@ -213,7 +213,7 @@ jobs:
     uses: ./.github/workflows/reusable-build-versions.yml
     with:
       versions_json: ${{ needs.fetch-releases.outputs.versions_json }}
-      build_profile: ${{ github.event.inputs.build_profile || 'production' }}
+      build_profile: ${{ github.event.inputs.build_profile || 'ci' }}
       force_build: ${{ needs.fetch-releases.outputs.normalized_force_build }}
       base_image_default: ${{ github.event.inputs.base_image || vars.BASE_IMAGE_DEFAULT || 'node:current-alpine' }}
       haproxy_image: ${{ vars.HAPROXY_IMAGE || 'haproxy:lts-alpine' }}
