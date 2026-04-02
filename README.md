@@ -73,7 +73,7 @@ Context7 MCP Server is a lightweight, high-performance Model Context Protocol se
 |:----|:---------:|:------------|:---------|
 | `stable` | ⭐⭐⭐ | Most stable release | **Recommended for production** |
 | `latest` | ⭐⭐⭐ | Latest stable release | Stay current with stable features |
-| `1.0.21` | ⭐⭐⭐ | Specific version | Version pinning for consistency |
+| `2.1.6` | ⭐⭐⭐ | Specific version | Version pinning for consistency |
 | `beta` | ⚠️ | Beta releases | **Testing only** |
 
 ### System Requirements
