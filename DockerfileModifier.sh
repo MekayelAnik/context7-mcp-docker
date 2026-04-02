@@ -38,16 +38,16 @@ LABEL org.opencontainers.image.source="https://github.com/mekayelanik/context7-m
 
 # Copy the entrypoint script into the container and make it executable
 COPY ./resources/ /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/banner.sh \
-    && if [ -f /usr/local/bin/build-timestamp.txt ]; then chmod +r /usr/local/bin/build-timestamp.txt; fi \
-    && mkdir -p /etc/haproxy \
-    && mv -vf /usr/local/bin/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template \
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/banner.sh \\
+    && if [ -f /usr/local/bin/build-timestamp.txt ]; then chmod +r /usr/local/bin/build-timestamp.txt; fi \\
+    && mkdir -p /etc/haproxy \\
+    && mv -vf /usr/local/bin/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template \\
     && ls -la /etc/haproxy/haproxy.cfg.template
 
 # Install required APK packages
-RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories && \
-    echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories && \
-    apk --update-cache --no-cache add bash shadow su-exec tzdata haproxy netcat-openbsd openssl && \
+RUN echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories && \\
+    echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories && \\
+    apk --update-cache --no-cache add bash shadow su-exec tzdata haproxy netcat-openbsd openssl && \\
     rm -rf /var/cache/apk/*
 
 # HAProxy with native QUIC/H3 support from official image
@@ -56,23 +56,23 @@ RUN mkdir -p /usr/local/sbin && ln -sf /usr/sbin/haproxy /usr/local/sbin/haproxy
 
 # Check if package exists before installing (cache mount reuses npm downloads across builds)
 RUN --mount=type=cache,target=/root/.npm \\
-    echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \
-    if npm view ${CONTEXT7_MCP_PKG} >/dev/null 2>&1; then \
-        echo "Package found, installing..." && \
-        npm install -g ${CONTEXT7_MCP_PKG} --omit=dev --no-audit --no-fund --loglevel error && \
-        echo "Package installed successfully"; \
-    else \
-        echo "ERROR: Package ${CONTEXT7_MCP_PKG} not found in registry!" >&2; \
-        echo "Available versions:" && \
-        npm view @upstash/context7-mcp versions --json | tr -d '\[\],' | tr '"' '\n' | grep -v '^$' | head -10; \
-        exit 1; \
+    echo "Checking if package exists: ${CONTEXT7_MCP_PKG}" && \\
+    if npm view ${CONTEXT7_MCP_PKG} >/dev/null 2>&1; then \\
+        echo "Package found, installing..." && \\
+        npm install -g ${CONTEXT7_MCP_PKG} --omit=dev --no-audit --no-fund --loglevel error && \\
+        echo "Package installed successfully"; \\
+    else \\
+        echo "ERROR: Package ${CONTEXT7_MCP_PKG} not found in registry!" >&2; \\
+        echo "Available versions:" && \\
+        npm view @upstash/context7-mcp versions --json | tr -d '\[\],' | tr '"' '\n' | grep -v '^$' | head -10; \\
+        exit 1; \\
     fi
 
 # Install Supergateway (cache mount shares npm cache with previous step)
 RUN --mount=type=cache,target=/root/.npm \\
-    echo "Installing Supergateway..." && \
-    npm install -g ${SUPERGATEWAY_PKG} --omit=dev --no-audit --no-fund --loglevel error && \
-    rm -rf /tmp/* /var/tmp/* && \
+    echo "Installing Supergateway..." && \\
+    npm install -g ${SUPERGATEWAY_PKG} --omit=dev --no-audit --no-fund --loglevel error && \\
+    rm -rf /tmp/* /var/tmp/* && \\
     rm -rf /usr/local/lib/node_modules/npm/man /usr/local/lib/node_modules/npm/docs /usr/local/lib/node_modules/npm/html
 
 # Use an ARG for the default port
