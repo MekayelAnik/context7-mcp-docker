@@ -1,4 +1,19 @@
+<p align="center"><img src="https://github.com/upstash/context7/blob/master/public/cover.png?raw=true" alt="Context7 Logo" width="400"></p>
+
 # Context7 MCP Server
+
+<p align="center">
+  <a href="https://hub.docker.com/r/mekayelanik/context7-mcp"><img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/mekayelanik/context7-mcp?style=flat-square&logo=docker"></a>
+  <a href="https://hub.docker.com/r/mekayelanik/context7-mcp"><img alt="Docker Stars" src="https://img.shields.io/docker/stars/mekayelanik/context7-mcp?style=flat-square&logo=docker"></a>
+  <a href="https://github.com/mekayelanik/context7-mcp-docker/pkgs/container/context7-mcp"><img alt="GHCR" src="https://img.shields.io/badge/GHCR-ghcr.io%2Fmekayelanik%2Fcontext7-mcp-blue?style=flat-square&logo=github"></a>
+  <a href="https://github.com/mekayelanik/context7-mcp-docker/blob/main/LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square"></a>
+  <a href="https://hub.docker.com/r/mekayelanik/context7-mcp"><img alt="Platforms" src="https://img.shields.io/badge/Platforms-amd64%20%7C%20arm64-lightgrey?style=flat-square"></a>
+  <a href="https://github.com/MekayelAnik/context7-mcp-docker/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/MekayelAnik/context7-mcp-docker?style=flat-square"></a>
+  <a href="https://github.com/MekayelAnik/context7-mcp-docker/forks"><img alt="GitHub Forks" src="https://img.shields.io/github/forks/MekayelAnik/context7-mcp-docker?style=flat-square"></a>
+  <a href="https://github.com/MekayelAnik/context7-mcp-docker/issues"><img alt="GitHub Issues" src="https://img.shields.io/github/issues/MekayelAnik/context7-mcp-docker?style=flat-square"></a>
+  <a href="https://github.com/MekayelAnik/context7-mcp-docker/commits/main"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/MekayelAnik/context7-mcp-docker?style=flat-square"></a>
+</p>
+
 ### Multi-Architecture Docker Image for Distributed Deployment
 
 <div align="left">
